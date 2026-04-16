@@ -1,0 +1,51 @@
+{
+  "ConnectionStrings": {
+    "Default": "Host=postgres;Database=wishlist;Username=wishlist;Password=CHANGE_IN_ENV",
+    "Redis": "redis:6379"
+  },
+  "Jwt": {
+    "Secret": "CHANGE_IN_ENV_OR_USE_ENVIRONMENT_VARIABLE",
+    "Issuer": "WishHub",
+    "Audience": "WishHubUsers",
+    "AccessTokenExpiryMinutes": 60,
+    "RefreshTokenExpiryDays": 30
+  },
+  "Hangfire": {
+    "PriceUpdateIntervalHours": 8
+  },
+  "Frontend": {
+    "Url": "https://your_domain.com"
+  },
+  "OAuth": {
+    "Vk": {
+      "ClientId": "YOUR_VK_APP_ID",
+      "ClientSecret": "YOUR_VK_SECRET",
+      "RedirectUri": "https://your_domain.com/api/auth/vk/callback"
+    },
+    "Telegram": {
+      "BotToken": "YOUR_BOT_TOKEN",
+      "BotUsername": "your_bot_username"
+    }
+  },
+  "ImageProxy": {
+    "AllowedDomains": [
+      "images.wbstatic.net",
+      "basket-01.wb.ru",
+      "basket-02.wb.ru",
+      "cdn1.ozon.ru",
+      "cdn2.ozon.ru",
+      "ir.ozone.ru",
+      "avatars.mds.yandex.net",
+      "market.cdn.yandex.net"
+    ],
+    "CacheTtlHours": 48,
+    "RequestTimeoutSeconds": 10
+  },
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  },
+  "AllowedHosts": "wishhub.rabb1t.tech"
+}

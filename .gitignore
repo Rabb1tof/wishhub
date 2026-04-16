@@ -1,0 +1,66 @@
+# =============================================
+# Root .gitignore for WishHub Project
+# =============================================
+
+# =============================================
+# Environment & Secrets - NEVER COMMIT THESE
+# =============================================
+
+# All .env files with real secrets
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+.env.prod
+.env.staging
+
+# Appsettings with real secrets
+**/appsettings.Development.json
+**/appsettings.Production.json
+**/appsettings.Staging.json
+
+# Example/template files CAN be committed
+!**/*.example
+!**/*.example.json
+!**/appsettings.json
+
+# Build outputs
+bin/
+obj/
+out/
+publish/
+dist/
+
+# Scripts are allowed (utility scripts)
+# !scripts/  <-- explicitly allow
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+*.sln.docstates
+
+# Rider / JetBrains
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test results
+TestResults/
+
+# Docker volumes
+docker-volumes/
+
+# Playwright (for product parsing)
+playwright-browser-data/

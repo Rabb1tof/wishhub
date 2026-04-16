@@ -1,0 +1,87 @@
+{
+  "ConnectionStrings": {
+    "Default": "Host=localhost;Database=wishlist;Username=wishlist;Password=wishlist",
+    "Redis": "localhost:6379"
+  },
+  "Jwt": {
+    "Secret": "REPLACE_WITH_32+_CHAR_RANDOM_SECRET_KEY_HERE",
+    "Issuer": "WishHub",
+    "Audience": "WishHubUsers"
+  },
+  "Frontend": {
+    "Url": "http://localhost:5173"
+  },
+  "OAuth": {
+    "Vk": {
+      "ClientId": "YOUR_VK_APP_ID",
+      "ClientSecret": "YOUR_VK_SECRET_KEY",
+      "RedirectUri": "http://localhost:5000/api/auth/vk/callback"
+    },
+    "Telegram": {
+      "BotToken": "YOUR_BOT_TOKEN",
+      "BotUsername": "your_bot_username"
+    }
+  },
+  "Hangfire": {
+    "PriceUpdateIntervalHours": 8
+  },
+  "ImageProxy": {
+    "AllowedDomains": [
+      "images.wbstatic.net",
+      "basket-01.wb.ru",
+      "basket-02.wb.ru",
+      "basket-03.wb.ru",
+      "basket-04.wb.ru",
+      "basket-05.wb.ru",
+      "basket-06.wb.ru",
+      "basket-07.wb.ru",
+      "basket-08.wb.ru",
+      "basket-09.wb.ru",
+      "basket-10.wb.ru",
+      "basket-11.wb.ru",
+      "basket-12.wb.ru",
+      "basket-13.wb.ru",
+      "basket-14.wb.ru",
+      "basket-15.wb.ru",
+      "basket-16.wb.ru",
+      "basket-17.wb.ru",
+      "basket-18.wb.ru",
+      "basket-19.wb.ru",
+      "basket-20.wb.ru",
+      "basket-01.wbbasket.ru",
+      "basket-02.wbbasket.ru",
+      "basket-03.wbbasket.ru",
+      "basket-04.wbbasket.ru",
+      "basket-05.wbbasket.ru",
+      "basket-06.wbbasket.ru",
+      "basket-07.wbbasket.ru",
+      "basket-08.wbbasket.ru",
+      "basket-09.wbbasket.ru",
+      "basket-10.wbbasket.ru",
+      "basket-11.wbbasket.ru",
+      "basket-12.wbbasket.ru",
+      "basket-13.wbbasket.ru",
+      "basket-14.wbbasket.ru",
+      "basket-15.wbbasket.ru",
+      "basket-16.wbbasket.ru",
+      "basket-17.wbbasket.ru",
+      "basket-18.wbbasket.ru",
+      "basket-19.wbbasket.ru",
+      "basket-20.wbbasket.ru",
+      "cdn1.ozon.ru",
+      "cdn2.ozon.ru",
+      "ir.ozone.ru",
+      "avatars.mds.yandex.net",
+      "market.cdn.yandex.net",
+      "avatars-cloud.yandex.net"
+    ],
+    "CacheTtlHours": 48,
+    "RequestTimeoutSeconds": 10
+  },
+  "Logging": {
+    "LogLevel": {
+      "Default": "Debug",
+      "Microsoft.AspNetCore": "Information"
+    }
+  }
+}

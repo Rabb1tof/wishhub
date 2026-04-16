@@ -1,0 +1,52 @@
+# =============================================
+# Backend .gitignore (WishHub.Api)
+# =============================================
+
+# Build outputs
+bin/
+obj/
+out/
+publish/
+
+# User-specific files
+*.user
+*.suo
+*.userprefs
+
+# IDE
+.vs/
+.vscode/
+.idea/
+
+# Environment & Secrets - NEVER commit these
+appsettings.Development.json
+appsettings.Production.json
+appsettings.Staging.json
+
+# Example files CAN be committed
+!appsettings.json.example
+!appsettings.Production.json.example
+!appsettings.Development.json.example
+
+# Example files CAN be committed
+!appsettings.json.example
+!appsettings.Production.json.example
+!appsettings.Development.json.example
+appsettings.json
+
+# Logs
+*.log
+logs/
+
+# EF Core Migrations snapshots (optional, can be committed but often regenerated)
+# *.Designer.cs
+
+# Test results
+TestResults/
+
+# Coverage
+coverage/
+*.coverage
+
+# NuGet
+*.nupkg

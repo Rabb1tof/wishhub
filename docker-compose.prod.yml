@@ -1,0 +1,185 @@
+version: '3.9'
+
+# =============================================
+# Production Docker Compose for WishHub
+# Domain: https://your_domain.com
+# =============================================
+#
+# USAGE:
+# 1. Copy .env.prod to .env and fill in your secrets
+# 2. Run: docker-compose -f docker-compose.prod.yml up -d
+#
+# REQUIREMENTS:
+# - Docker and Docker Compose installed
+# - SSL certificates in ./ssl/ directory (for HTTPS)
+# - DNS A record pointing to your server IP
+
+services:
+  # =============================================
+  # PostgreSQL Database
+  # =============================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: wishhub-postgres
+    # Load all env vars from .env file
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Optional: backup directory
+      - ./backups:/backups
+    restart: unless-stopped
+    networks:
+      - wishhub-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wishlist} -d ${POSTGRES_DB:-wishlist}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # =============================================
+  # Redis Cache
+  # =============================================
+  redis:
+    image: redis:7-alpine
+    container_name: wishhub-redis
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redisdata:/data
+    restart: unless-stopped
+    networks:
+      - wishhub-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # =============================================
+  # Backend API (.NET)
+  # =============================================
+  api:
+    build:
+      context: .
+      dockerfile: WishHub.Api/Dockerfile
+    container_name: wishhub-api
+    # Load all env vars from .env file
+    env_file:
+      - .env
+    environment:
+      # Environment
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:5000
+
+      # Database - from .env (POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD)
+      - ConnectionStrings__Default=Host=postgres;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - ConnectionStrings__Redis=redis:6379
+
+      # JWT - from .env (JWT_SECRET, JWT_ISSUER, JWT_AUDIENCE)
+      - Jwt__Secret=${JWT_SECRET}
+      - Jwt__Issuer=${JWT_ISSUER}
+      - Jwt__Audience=${JWT_AUDIENCE}
+
+      # Frontend URL - from .env (PUBLIC_URL)
+      - Frontend__Url=${PUBLIC_URL}
+
+      # OAuth - VK - from .env (VK_CLIENT_ID, VK_CLIENT_SECRET)
+      - OAuth__Vk__ClientId=${VK_CLIENT_ID}
+      - OAuth__Vk__ClientSecret=${VK_CLIENT_SECRET}
+      - OAuth__Vk__RedirectUri=${PUBLIC_URL}/api/auth/vk/callback
+
+      # OAuth - Telegram - from .env (TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_USERNAME)
+      - OAuth__Telegram__BotToken=${TELEGRAM_BOT_TOKEN}
+      - OAuth__Telegram__BotUsername=${TELEGRAM_BOT_USERNAME}
+
+      # Hangfire - from .env (HANGFIRE_INTERVAL)
+      - Hangfire__PriceUpdateIntervalHours=${HANGFIRE_INTERVAL}
+
+      # Image Proxy
+      - ImageProxy__CacheTtlHours=48
+      - ImageProxy__RequestTimeoutSeconds=10
+
+      # Logging
+      - Logging__LogLevel__Default=Information
+      - Logging__LogLevel__Microsoft.AspNetCore=Warning
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - avatars:/app/wwwroot/avatars
+      - ./logs/api:/app/logs
+    restart: unless-stopped
+    networks:
+      - wishhub-network
+
+  # =============================================
+  # Frontend (React + Vite)
+  # =============================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      # Pass build args from .env
+      args:
+        VITE_API_URL: /api
+        VITE_HUB_URL: /hubs
+        NODE_ENV: production
+    container_name: wishhub-frontend
+    # Load env vars from .env (for runtime if needed)
+    env_file:
+      - .env
+    depends_on:
+      - api
+    restart: unless-stopped
+    networks:
+      - wishhub-network
+
+  # =============================================
+  # Nginx Reverse Proxy
+  # =============================================
+  nginx:
+    image: nginx:alpine
+    container_name: wishhub-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      # SSL certificates (mount your certs here)
+      - ./ssl:/etc/nginx/ssl:ro
+      # Let's Encrypt (alternative)
+      # - /etc/letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      - api
+      - frontend
+    restart: unless-stopped
+    networks:
+      - wishhub-network
+
+# =============================================
+# Volumes
+# =============================================
+volumes:
+  pgdata:
+    driver: local
+  redisdata:
+    driver: local
+  avatars:
+    driver: local
+
+# =============================================
+# Networks
+# =============================================
+networks:
+  wishhub-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
