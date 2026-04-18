@@ -8,6 +8,8 @@ public class WishlistItemDto
     public bool IsReservedByMe { get; set; }
     public int SortOrder { get; set; }
     public DateTime CreatedAt { get; set; }
+    public bool IsProcessing { get; set; }
+    public string? ProcessingError { get; set; }
     public ProductDto Product { get; set; } = null!;
     public UserDto? ReservedBy { get; set; }
 }

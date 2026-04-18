@@ -11,7 +11,12 @@ using WishHub.Core.Services;
 using WishHub.Infrastructure.BackgroundJobs;
 using WishHub.Infrastructure.Data;
 using WishHub.Infrastructure.Services;
+using WishHub.Parsing.Ozon;
 using WishHub.Parsing.Parsers;
+using WishHub.Parsing.Playwright.Browsers;
+using WishHub.Parsing.Playwright.Contexts;
+using WishHub.Parsing.Playwright.Fingerprinting;
+using WishHub.Parsing.Playwright.Stealth;
 
 namespace WishHub.Api;
 
@@ -32,6 +37,7 @@ public class Program
         builder.Services.AddScoped<IFriendshipService, FriendshipService>();
         builder.Services.AddScoped<IMessageService, MessageService>();
         builder.Services.AddScoped<INotificationService, NotificationService>();
+        builder.Services.AddScoped<IBackgroundParsingService, BackgroundParsingService>();
         builder.Services.AddScoped<PriceUpdateJob>();
 
         // Add Hangfire
@@ -50,13 +56,33 @@ public class Program
         // Playwright browser provider (safe fallback to null if not installed)
         builder.Services.AddSingleton<BrowserProvider>();
 
+        builder.Services.Configure<SessionManagerOptions>(builder.Configuration.GetSection("Parsing:Ozon:Sessions"));
+        builder.Services.Configure<RequestSchedulerOptions>(builder.Configuration.GetSection("Parsing:Ozon:Scheduler"));
+
+        builder.Services.AddSingleton<IFingerprintPool, FingerprintPool>();
+        builder.Services.AddSingleton<IStealthInitScriptFactory, StealthInitScriptFactory>();
+        builder.Services.AddSingleton<IChromiumBrowserLauncher, PlaywrightChromiumBrowserLauncher>();
+        builder.Services.AddSingleton<IBrowserContextFactory, BrowserContextFactory>();
+        builder.Services.AddSingleton<IRandomValueProvider, RandomValueProvider>();
+        builder.Services.AddSingleton<IAsyncDelay, AsyncDelay>();
+        builder.Services.AddSingleton<ISessionManager, SessionManager>();
+        builder.Services.AddSingleton<IHumanBehaviorSimulator, HumanBehaviorSimulator>();
+        builder.Services.AddSingleton<IBlockDetector, BlockDetector>();
+        builder.Services.AddSingleton<IProxyProvider, NoOpProxyProvider>();
+        builder.Services.AddSingleton<IRequestScheduler, RequestScheduler>();
+        builder.Services.AddSingleton<IOzonProductScraper, OzonProductScraper>();
+
         // Register parsers (after Playwright so browser is available)
         builder.Services.AddSingleton<ParserFactory>();
         builder.Services.AddHttpClient<WildberriesParser>()
             .AddTypedClient((httpClient, sp) => new WildberriesParser(httpClient, sp.GetRequiredService<BrowserProvider>().Browser));
 
         builder.Services.AddHttpClient<OzonParser>()
-            .AddTypedClient((httpClient, sp) => new OzonParser(httpClient, sp.GetRequiredService<BrowserProvider>().Browser));
+            .AddTypedClient((httpClient, sp) => new OzonParser(
+                httpClient,
+                sp.GetRequiredService<IOzonProductScraper>(),
+                sp.GetRequiredService<IFingerprintPool>(),
+                sp.GetRequiredService<ILogger<OzonParser>>()));
 
         builder.Services.AddHttpClient<YandexMarketParser>()
             .AddTypedClient((httpClient, sp) => new YandexMarketParser(httpClient, sp.GetRequiredService<BrowserProvider>().Browser));

@@ -562,6 +562,19 @@ public interface IProductService
 - [ ] В CI/CD и Dockerfile добавить шаг: `playwright install chromium`
 - [ ] Создать `IPlaywrightBrowserPool` — синглтон, держит один `IBrowser`, переиспользует страницы
 
+### 4.9 Ozon stealth scraping hardening
+
+- [ ] Добавить `FingerprintProfile`, `IFingerprintPool`, `FingerprintPool` с реалистичными профилями Chrome и согласованными параметрами экрана/платформы
+- [ ] Добавить фабрику stealth init script с маскировкой `navigator.webdriver`, `plugins`, `languages`, `permissions`, WebGL и profile-driven hardware fields
+- [ ] Добавить `IBrowserContextFactory`/`BrowserContextFactory` для stealth-контекстов с profile-driven headers и опциональным proxy
+- [ ] Добавить `ISessionManager`/`SessionManager` для warm-up и сохранения/восстановления storage state Ozon-сессий
+- [ ] Добавить `IHumanBehaviorSimulator`/`HumanBehaviorSimulator` с jitter, scroll и mouse movement
+- [ ] Добавить `IBlockDetector`/`BlockDetector` и `OzonBlockedException` для детекта CAPTCHA/blocked responses
+- [ ] Добавить `IOzonProductScraper`/`OzonProductScraper` с retry по новому profile/proxy и извлечением расширенных полей товара
+- [ ] Добавить `IRequestScheduler`/`RequestScheduler` для batch scraping с лимитом параллелизма и lock per proxy
+- [ ] Обновить `OzonParser` и DI-регистрацию для использования нового stealth pipeline
+- [ ] Добавить unit/integration tests для новых Ozon stealth компонентов
+
 ---
 
 ## Этап 5 — Прокси картинок

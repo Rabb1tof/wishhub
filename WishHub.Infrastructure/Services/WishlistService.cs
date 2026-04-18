@@ -221,6 +221,10 @@ public class WishlistService : IWishlistService
             ? $"/api/images/proxy?url={Uri.EscapeDataString(imageUrl)}"
             : null;
 
+        // Показываем processing если продукт в процессе или ожидании парсинга
+        var isProcessing = item.Product.ParsingStatus == ParsingStatus.Pending ||
+                           item.Product.ParsingStatus == ParsingStatus.Processing;
+
         return new WishlistItemDto
         {
             Id = item.Id,
@@ -229,12 +233,16 @@ public class WishlistService : IWishlistService
             IsReservedByMe = item.ReservedById == viewerId,
             SortOrder = item.SortOrder,
             CreatedAt = item.CreatedAt,
+            IsProcessing = isProcessing,
+            ProcessingError = item.Product.ParsingStatus == ParsingStatus.Failed
+                ? item.Product.ParsingError
+                : null,
             Product = new ProductDto
             {
                 Id = item.Product.Id,
-                Name = item.Product.Name,
+                Name = isProcessing ? (item.CustomName ?? "Загрузка...") : item.Product.Name,
                 ImageUrl = item.Product.ImageUrl,
-                ImageProxyUrl = imageProxyUrl,
+                ImageProxyUrl = isProcessing ? null : imageProxyUrl,
                 Price = item.Product.Price,
                 Currency = item.Product.Currency,
                 Source = item.Product.Source.ToString(),

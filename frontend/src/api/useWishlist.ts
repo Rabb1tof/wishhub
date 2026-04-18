@@ -21,6 +21,12 @@ export function useWishlist(userId?: string) {
         throw err
       }
     },
+    // Если есть товары в процессе загрузки — обновляем каждые 3 секунды
+    refetchInterval: (query) => {
+      const items = query.state.data?.items || []
+      const hasProcessing = items.some(item => item.isProcessing)
+      return hasProcessing ? 3000 : false
+    },
   })
 }
 

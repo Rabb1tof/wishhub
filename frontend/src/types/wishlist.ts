@@ -18,6 +18,8 @@ export interface WishlistItem {
   reservedById?: string
   reservedByUsername?: string
   reservedByDisplayName?: string
+  isProcessing?: boolean
+  processingError?: string
 }
 
 export interface AddWishlistItemRequest {

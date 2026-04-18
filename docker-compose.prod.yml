@@ -1,5 +1,3 @@
-version: '3.9'
-
 # =============================================
 # Production Docker Compose for WishHub
 # Domain: https://your_domain.com
@@ -114,6 +112,7 @@ services:
         condition: service_healthy
     volumes:
       - avatars:/app/wwwroot/avatars
+      - playwright_state:/app/playwright-state
       - ./logs/api:/app/logs
     restart: unless-stopped
     networks:
@@ -130,7 +129,6 @@ services:
       args:
         VITE_API_URL: /api
         VITE_HUB_URL: /hubs
-        NODE_ENV: production
     container_name: wishhub-frontend
     # Load env vars from .env (for runtime if needed)
     env_file:
@@ -172,6 +170,8 @@ volumes:
   redisdata:
     driver: local
   avatars:
+    driver: local
+  playwright_state:
     driver: local
 
 # =============================================

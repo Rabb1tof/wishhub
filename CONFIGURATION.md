@@ -136,6 +136,33 @@ cp .env frontend/.env.production
 # Отредактируй, оставь только VITE_ переменные
 ```
 
+### 2. Разработка через туннель (OAuth тестирование)
+
+Для тестирования OAuth с публичным URL:
+
+```bash
+# 1. Создай dev окружение (уже создано .env.dev)
+
+# 2. Запусти VS Code туннель
+# Command Palette → "Ports: Focus on Ports View"
+# Forward port 5000 (backend) и 5173 (frontend)
+# Сделай публичным
+
+# 3. Запусти полный dev stack
+./scripts/dev-tunnel.sh
+# или
+docker compose -f docker-compose.dev.yml up -d
+
+# 4. Обнови OAuth настройки:
+# VK ID: base domain = xxx-5173.euw.devtunnels.ms
+# Telegram: /setdomain xxx-5173.euw.devtunnels.ms
+```
+
+**Структура dev окружения:**
+- `env.dev` - твои dev секреты с туннельным URL (НЕ коммитится)
+- `docker-compose.dev.yml` - использует env.dev
+- Отдельные volumes: `pgdata_dev`, `redisdata_dev` (не конфликтуют с prod)
+
 ### 3. Production через EasyPanel
 
 ```bash

@@ -79,6 +79,8 @@ export function WishlistPage() {
 function WishlistItemCard({ item, isOwner }: { item: WishlistItem; isOwner: boolean }) {
   const deleteItem = useDeleteItem()
   const refreshItem = useRefreshItem()
+  const isProcessing = item.isProcessing
+  const hasError = item.processingError
 
   const handleDelete = async (e: React.MouseEvent) => {
     e.preventDefault()
@@ -107,22 +109,60 @@ function WishlistItemCard({ item, isOwner }: { item: WishlistItem; isOwner: bool
       rel="noopener noreferrer"
       className="bg-white rounded-lg shadow overflow-hidden block hover:shadow-lg transition-shadow"
     >
-      {item.product.imageProxyUrl && (
+      {/* Изображение или placeholder */}
+      {isProcessing ? (
+        <div className="w-full h-48 bg-gray-100 flex items-center justify-center">
+          <div className="w-8 h-8 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
+        </div>
+      ) : item.product.imageProxyUrl ? (
         <img
           src={item.product.imageProxyUrl}
           alt={item.product.name}
           className="w-full h-48 object-cover"
         />
+      ) : (
+        <div className="w-full h-48 bg-gray-100 flex items-center justify-center">
+          <span className="text-gray-400 text-sm">Нет изображения</span>
+        </div>
       )}
+
       <div className="p-4">
-        <h3 className="font-semibold">{item.customName || item.product.name}</h3>
+        {/* Название */}
+        <h3 className="font-semibold">
+          {isProcessing ? (
+            <span className="text-gray-500 flex items-center gap-2">
+              <span className="w-4 h-4 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin inline-block" />
+              {item.customName || item.product.name}
+            </span>
+          ) : (
+            item.customName || item.product.name
+          )}
+        </h3>
+
+        {/* Цена */}
         <p className="text-gray-600">
-          {item.product.price} {item.product.currency}
+          {isProcessing ? (
+            <span className="text-gray-400">Загрузка цены...</span>
+          ) : item.product.price ? (
+            `${item.product.price} ${item.product.currency}`
+          ) : (
+            <span className="text-gray-400">Цена не указана</span>
+          )}
         </p>
+
         <p className="text-sm text-gray-500">{sourceName}</p>
 
+        {/* Ошибка парсинга */}
+        {hasError && (
+          <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded">
+            <p className="text-sm text-yellow-800">
+              Не удалось загрузить данные товара
+            </p>
+          </div>
+        )}
+
         {/* Кнопки для владельца */}
-        {isOwner && (
+        {isOwner && !isProcessing && (
           <div className="mt-3 flex items-center gap-3 text-sm">
             <button
               onClick={handleRefresh}
@@ -155,7 +195,10 @@ function AddItemModal({ onClose }: { onClose: () => void }) {
   const handleAdd = async () => {
     setError('')
     try {
+      // Добавляем товар — парсинг происходит в фоне
       await addItem.mutateAsync({ url, customName: customName || undefined })
+      // Сразу закрываем модалку и возвращаемся к вишлисту
+      // Товар появится в списке со статусом "Загрузка..."
       onClose()
     } catch (err: any) {
       const message = err.response?.data?.error || err.response?.data?.message || 'Не удалось добавить товар'

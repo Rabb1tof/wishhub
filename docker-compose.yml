@@ -1,5 +1,3 @@
-version: '3.9'
-
 # =============================================
 # Development Docker Compose
 # Loads all env vars from .env file

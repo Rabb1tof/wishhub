@@ -17,7 +17,7 @@ public class WildberriesParser : IProductParser
     private const string ApiRoot = "https://card.wb.ru/cards";
     private const string RegionsParam = "64,75,83,4,38,30,33,70,68,22,31,66,67,48,110,71,114";
     private const string StoresParam = "117673,122258,122259,125238,507,3158,5073,117501,5076";
-    private const string PlaywrightUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36";
+    private const string PlaywrightUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36";
 
     public WildberriesParser(HttpClient httpClient, IBrowser? browser = null)
     {

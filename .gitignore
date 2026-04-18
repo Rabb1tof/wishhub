@@ -11,14 +11,24 @@
 .env.local
 .env.*.local
 .env.development
+.env.dev
 .env.production
 .env.prod
 .env.staging
+
+# Docker compose files
+docker-compose.dev.yml
 
 # Appsettings with real secrets
 **/appsettings.Development.json
 **/appsettings.Production.json
 **/appsettings.Staging.json
+
+# Docker compose files with secrets (dev/prod using env_file are OK)
+# Only ignore if they contain hardcoded secrets
+
+# Development scripts
+scripts/dev-tunnel.sh
 
 # Example/template files CAN be committed
 !**/*.example

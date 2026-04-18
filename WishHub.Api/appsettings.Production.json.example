@@ -47,5 +47,5 @@
       "Microsoft.AspNetCore": "Warning"
     }
   },
-  "AllowedHosts": "wishhub.rabb1t.tech"
+  "AllowedHosts": "*"
 }

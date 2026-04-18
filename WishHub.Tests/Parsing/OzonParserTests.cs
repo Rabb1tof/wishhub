@@ -3,7 +3,9 @@ using HtmlAgilityPack;
 using Moq;
 using Moq.Protected;
 using WishHub.Core.Entities;
+using WishHub.Parsing.Ozon;
 using WishHub.Parsing.Parsers;
+using WishHub.Parsing.Playwright.Fingerprinting;
 using WishHub.Tests;
 using Xunit;
 
@@ -137,6 +139,39 @@ public class OzonParserTests
         // Assert
         Assert.False(result.Success);
         Assert.Contains("HTTP parsing failed", result.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task ParseAsync_WithStealthScraper_ReturnsMappedProductWithoutHttpFallback()
+    {
+        var scraper = new Mock<IOzonProductScraper>();
+        scraper
+            .Setup(x => x.ScrapeProductAsync("https://www.ozon.ru/product/123", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OzonProduct
+            {
+                Url = "https://www.ozon.ru/product/123",
+                Title = "Stealth Product",
+                Price = 2499m,
+                Rating = 4.7m,
+                ReviewCount = 18,
+                Description = "desc",
+                Images = ["https://example.com/stealth.jpg"]
+            });
+
+        var parser = new OzonParser(_httpClient, scraper.Object, new FingerprintPool());
+
+        var result = await parser.ParseAsync("https://www.ozon.ru/product/123");
+
+        Assert.True(result.Success);
+        Assert.Equal("Stealth Product", result.Name);
+        Assert.Equal(2499m, result.Price);
+        Assert.Equal("https://example.com/stealth.jpg", result.ImageUrl);
+        Assert.Equal(ProductSource.Ozon, result.Source);
+        _mockHttpMessageHandler.Protected().Verify(
+            "SendAsync",
+            Times.Never(),
+            ItExpr.IsAny<HttpRequestMessage>(),
+            ItExpr.IsAny<CancellationToken>());
     }
 
     [Trait("Category", "Integration")]

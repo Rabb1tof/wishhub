@@ -271,6 +271,15 @@ namespace WishHub.Infrastructure.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
 
+                    b.Property<int>("ParseAttempts")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ParsingError")
+                        .HasColumnType("text");
+
+                    b.Property<int>("ParsingStatus")
+                        .HasColumnType("integer");
+
                     b.Property<decimal?>("Price")
                         .HasColumnType("numeric");
 

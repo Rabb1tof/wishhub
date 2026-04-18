@@ -11,12 +11,18 @@ public class ProductService : IProductService
 {
     private readonly AppDbContext _dbContext;
     private readonly ParserFactory _parserFactory;
+    private readonly IBackgroundParsingService _backgroundParsing;
     private readonly ILogger<ProductService> _logger;
 
-    public ProductService(AppDbContext dbContext, ParserFactory parserFactory, ILogger<ProductService> logger)
+    public ProductService(
+        AppDbContext dbContext,
+        ParserFactory parserFactory,
+        IBackgroundParsingService backgroundParsing,
+        ILogger<ProductService> logger)
     {
         _dbContext = dbContext;
         _parserFactory = parserFactory;
+        _backgroundParsing = backgroundParsing;
         _logger = logger;
     }
 
@@ -29,14 +35,67 @@ public class ProductService : IProductService
         var existingProduct = await _dbContext.Products
             .FirstOrDefaultAsync(p => p.Url == url, ct);
 
-        // Если товар уже есть и обновлялся недавно (< 6 часов) — возвращаем как есть.
-        // Это кэш для добавления в вишлист нескольких друзей, чтобы не перепарсивать каждый раз.
-        if (existingProduct != null && existingProduct.LastParsedAt > DateTime.UtcNow.AddHours(-6))
+        // Если товар уже есть и успешно распарсен — возвращаем как есть
+        if (existingProduct != null && existingProduct.ParsingStatus == ParsingStatus.Completed)
         {
             return existingProduct;
         }
 
-        return await ParseAndPersistAsync(url, existingProduct, ct);
+        // Если товар в процессе парсинга или ожидания — тоже возвращаем
+        if (existingProduct != null &&
+            (existingProduct.ParsingStatus == ParsingStatus.Processing ||
+             existingProduct.ParsingStatus == ParsingStatus.Pending))
+        {
+            return existingProduct;
+        }
+
+        // Если товар есть но упал с ошибкой — перезапускаем парсинг
+        if (existingProduct != null && existingProduct.ParsingStatus == ParsingStatus.Failed)
+        {
+            existingProduct.ParsingStatus = ParsingStatus.Pending;
+            existingProduct.ParseAttempts = 0;
+            existingProduct.ParsingError = null;
+            await _dbContext.SaveChangesAsync(ct);
+
+            _backgroundParsing.EnqueueParsing(existingProduct.Id, url);
+            return existingProduct;
+        }
+
+        // Создаём новый продукт сразу (без ожидания парсинга)
+        var parser = _parserFactory.GetParser(url);
+        if (parser == null)
+        {
+            throw new InvalidOperationException($"No parser available for URL: {url}");
+        }
+
+        // Определяем источник по URL
+        var source = _parserFactory.ParseSource(url);
+
+        var newProduct = new Product
+        {
+            Id = Guid.NewGuid(),
+            Url = url,
+            Name = "Загрузка...", // Временное имя
+            ImageUrl = null,
+            Price = null,
+            Currency = "RUB",
+            Source = source,
+            LastParsedAt = DateTime.MinValue,
+            CreatedAt = DateTime.UtcNow,
+            ParsingStatus = ParsingStatus.Pending
+        };
+
+        _dbContext.Products.Add(newProduct);
+        await _dbContext.SaveChangesAsync(ct);
+
+        // Запускаем фоновый парсинг
+        _backgroundParsing.EnqueueParsing(newProduct.Id, url);
+
+        _logger.LogInformation(
+            "Created product {ProductId} with status Pending, enqueued background parsing",
+            newProduct.Id);
+
+        return newProduct;
     }
 
     public async Task RefreshPriceAsync(Guid productId, CancellationToken ct = default)
@@ -59,7 +118,16 @@ public class ProductService : IProductService
             throw new InvalidOperationException($"No parser available for URL: {url}");
         }
 
+        _logger.LogInformation("Starting to parse product from URL: {Url} using {ParserType}", url, parser.GetType().Name);
+        
         var parseResult = await parser.ParseAsync(url, ct);
+        
+        _logger.LogInformation("Parse result: Success={Success}, Name={Name}, Price={Price}, Error={Error}", 
+            parseResult.Success, 
+            parseResult.Name ?? "null", 
+            parseResult.Price?.ToString() ?? "null",
+            parseResult.ErrorMessage ?? "none");
+        
         if (!parseResult.Success)
         {
             throw new InvalidOperationException($"Failed to parse product: {parseResult.ErrorMessage}");

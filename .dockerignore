@@ -1,0 +1,53 @@
+# =============================================
+# Root .dockerignore - for backend build context
+# =============================================
+
+# Build outputs (from all .NET projects)
+**/bin
+**/obj
+**/out
+**/publish
+
+# IDE
+.vs
+.vscode
+.idea
+**/*.user
+**/*.suo
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Environment files (secrets shouldn't be in image)
+.env
+.env.*
+!.env.example
+
+# Frontend (has its own Dockerfile)
+frontend/node_modules
+frontend/dist
+frontend/.vite
+
+# Docker
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+
+# Logs
+**/*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation (not needed in image)
+*.md
+docs/
+
+# Tests
+**/TestResults
+**/coverage
+WishHub.Tests/

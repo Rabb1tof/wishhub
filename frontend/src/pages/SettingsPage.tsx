@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useState, useEffect, type FormEvent } from 'react'
 import { Layout } from '@/components/Layout'
 import { useMyProfile, useUpdateProfile, useChangePassword, useUploadAvatar } from '@/api/useProfile'
 import { UserAvatar } from '@/components/UserAvatar'
@@ -18,13 +18,24 @@ export function SettingsPage() {
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
 
-  // Initialize form when profile loads
-  if (profile && !displayName && !bio) {
-    setDisplayName(profile.displayName)
-    setBio(profile.bio || '')
-    setWishlistPrivacy((profile.wishlistPrivacy as 'public' | 'friendsOnly' | 'private') ?? 'public')
-    setPriceRefreshIntervalHours(profile.priceRefreshIntervalHours ?? 24)
-  }
+  // Initialize form when profile loads (only once)
+  useEffect(() => {
+    if (profile) {
+      setDisplayName(profile.displayName)
+      setBio(profile.bio || '')
+      // Map backend CamelCase to frontend camelCase
+      const privacyMap: Record<string, 'public' | 'friendsOnly' | 'private'> = {
+        'Public': 'public',
+        'public': 'public',
+        'FriendsOnly': 'friendsOnly',
+        'friendsonly': 'friendsOnly',
+        'Private': 'private',
+        'private': 'private'
+      }
+      setWishlistPrivacy(privacyMap[profile.wishlistPrivacy] ?? 'public')
+      setPriceRefreshIntervalHours(profile.priceRefreshIntervalHours ?? 24)
+    }
+  }, [profile])
 
   const handleProfileSubmit = async (e: FormEvent) => {
     e.preventDefault()

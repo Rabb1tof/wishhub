@@ -2,32 +2,38 @@
 # Frontend Dockerfile for WishHub
 # =============================================
 
-# Build stage
-FROM node:20-alpine AS build
+# Build stage - use Debian-based image for native module compatibility
+# (Alpine uses musl libc which breaks rolldown native bindings)
+FROM node:20 AS build
 
-# Accept build arguments
+# Accept build arguments from docker-compose
 ARG VITE_API_URL=/api
 ARG VITE_HUB_URL=/hubs
-ARG NODE_ENV=production
 
-# Set as environment variables for build
+# Set as environment variables for Vite build
 ENV VITE_API_URL=${VITE_API_URL}
 ENV VITE_HUB_URL=${VITE_HUB_URL}
-ENV NODE_ENV=${NODE_ENV}
+# Don't set NODE_ENV=production before npm ci - it would skip devDependencies
+ENV NODE_ENV=development
 
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# Copy package files first (for better layer caching)
+COPY package.json package-lock.json ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Clean install ALL dependencies (including devDependencies for build tools)
+# Force install native bindings for the container platform (linux)
+RUN npm ci --include=dev
 
-# Copy source code
+# Copy source code (.dockerignore excludes node_modules)
 COPY . .
 
-# Build the application
-RUN npm run build
+# Now set production mode for the build
+ENV NODE_ENV=production
+
+# Build: TypeScript check + Vite build
+# Use npx to ensure local TypeScript is used
+RUN npx tsc -b && npx vite build
 
 # =============================================
 # Production stage
@@ -40,11 +46,7 @@ COPY --from=build /app/dist /usr/share/nginx/html
 # Copy nginx configuration
 COPY nginx.conf /etc/nginx/nginx.conf
 
-# Create non-root user for security
-RUN addgroup -g 1001 -S nginx && \
-    adduser -S -D -H -u 1001 -h /var/cache/nginx -s /sbin/nologin -G nginx nginx
-
-# Set proper permissions
+# Set proper permissions (nginx user already exists in nginx:alpine)
 RUN chown -R nginx:nginx /usr/share/nginx/html && \
     chmod -R 755 /usr/share/nginx/html
 
