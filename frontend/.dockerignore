@@ -45,8 +45,17 @@ lerna-debug.log*
 
 # Git
 .git
+**/.git
 .gitignore
 
 # Docker
 Dockerfile
 .dockerignore
+
+# Editor / Workspace
+.windsurf
+.idea
+.vscode
+
+# Misc dev artifacts
+README.md

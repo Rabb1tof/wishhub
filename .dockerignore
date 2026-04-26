@@ -1,5 +1,7 @@
 # =============================================
 # Root .dockerignore - for backend build context
+# Keep this aggressive: everything not needed at build/runtime
+# should be excluded so the build context stays small.
 # =============================================
 
 # Build outputs (from all .NET projects)
@@ -8,29 +10,35 @@
 **/out
 **/publish
 
-# IDE
+# IDE / editor metadata
 .vs
 .vscode
 .idea
+.windsurf
 **/*.user
 **/*.suo
 
 # Git
 .git
+**/.git
 .gitignore
 .gitattributes
+.github
 
-# Environment files (secrets shouldn't be in image)
+# Environment files (secrets must never be in image)
 .env
 .env.*
 !.env.example
 
-# Frontend (has its own Dockerfile)
+# Frontend artifacts (it has its own Dockerfile / build context)
 frontend/node_modules
 frontend/dist
 frontend/.vite
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
 
-# Docker
+# Docker files (build context shouldn't include compose / dockerfiles)
 docker-compose*.yml
 Dockerfile*
 .dockerignore
@@ -39,15 +47,18 @@ Dockerfile*
 **/*.log
 logs/
 
-# OS
+# OS junk
 .DS_Store
 Thumbs.db
 
-# Documentation (not needed in image)
+# Documentation
 *.md
 docs/
 
-# Tests
+# Tests (not shipped with API image)
 **/TestResults
 **/coverage
 WishHub.Tests/
+
+# Local scripts
+scripts/dev-tunnel.sh

@@ -1,44 +1,85 @@
+# syntax=docker/dockerfile:1.7
+
+# =============================================
+# Build stage
+# =============================================
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /src
 
-# SDK-образ уже содержит pwsh — нужен только для playwright.ps1 install --with-deps
+ENV DOTNET_NOLOGO=true \
+    DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+    NUGET_XMLDOC_MODE=skip
 
-COPY . .
+# 1. Copy only project files for restore layer cache
+COPY WishHub.sln ./
+COPY WishHub.Core/*.csproj            WishHub.Core/
+COPY WishHub.Infrastructure/*.csproj  WishHub.Infrastructure/
+COPY WishHub.Parsing/*.csproj         WishHub.Parsing/
+COPY WishHub.Api/*.csproj             WishHub.Api/
 
-RUN dotnet restore WishHub.Api/WishHub.Api.csproj
-RUN dotnet build WishHub.Api/WishHub.Api.csproj -c Release --no-restore
+RUN --mount=type=cache,id=wishhub-nuget,target=/root/.nuget/packages \
+    dotnet restore WishHub.Api/WishHub.Api.csproj
 
-# Официальный способ установки: playwright.ps1 install --with-deps.
-# Флаг --with-deps ставит apt-пакеты для Chromium, browsers уходят в /ms-playwright.
+# 2. Copy the rest of the source
+COPY WishHub.Core/            WishHub.Core/
+COPY WishHub.Infrastructure/  WishHub.Infrastructure/
+COPY WishHub.Parsing/         WishHub.Parsing/
+COPY WishHub.Api/             WishHub.Api/
+
+# 3. Publish (single combined build + publish step)
+RUN --mount=type=cache,id=wishhub-nuget,target=/root/.nuget/packages \
+    dotnet publish WishHub.Api/WishHub.Api.csproj \
+        -c Release \
+        -o /app \
+        --no-restore \
+        /p:UseAppHost=false
+
+# 4. Download Playwright Chromium browser only (no apt deps here)
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-RUN pwsh WishHub.Api/bin/Release/net9.0/playwright.ps1 install --with-deps chromium
+RUN pwsh /app/playwright.ps1 install chromium
 
-RUN dotnet publish WishHub.Api/WishHub.Api.csproj -c Release -o /app --no-restore --no-build
-
+# =============================================
+# Runtime stage
 # =============================================
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime
 WORKDIR /app
 
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    DOTNET_RUNNING_IN_CONTAINER=true \
+    ASPNETCORE_URLS=http://+:5000
 
-# Install PowerShell (tarball) для playwright.ps1 install-deps в runtime
-ARG PWSH_VERSION=7.4.6
-RUN apt-get update && apt-get install -y --no-install-recommends wget ca-certificates libicu72 && \
-    ARCH=$(dpkg --print-architecture) && \
-    if [ "$ARCH" = "arm64" ]; then PWSH_ARCH="linux-arm64"; else PWSH_ARCH="linux-x64"; fi && \
-    wget -q "https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VERSION}/powershell-${PWSH_VERSION}-${PWSH_ARCH}.tar.gz" -O /tmp/pwsh.tar.gz && \
-    mkdir -p /opt/microsoft/powershell/7 && \
-    tar zxf /tmp/pwsh.tar.gz -C /opt/microsoft/powershell/7 && \
-    chmod +x /opt/microsoft/powershell/7/pwsh && \
-    ln -s /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh && \
-    rm /tmp/pwsh.tar.gz && \
-    rm -rf /var/lib/apt/lists/*
+# Install Chromium system dependencies for Debian 12 (bookworm).
+# List taken from Playwright nativeDeps for chromium. We do NOT install pwsh
+# in the runtime stage — that's where most of the bloat used to come from.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libasound2 \
+        libatk-bridge2.0-0 \
+        libatk1.0-0 \
+        libatspi2.0-0 \
+        libcairo2 \
+        libcups2 \
+        libdbus-1-3 \
+        libdrm2 \
+        libgbm1 \
+        libglib2.0-0 \
+        libnspr4 \
+        libnss3 \
+        libpango-1.0-0 \
+        libx11-6 \
+        libxcb1 \
+        libxcomposite1 \
+        libxdamage1 \
+        libxext6 \
+        libxfixes3 \
+        libxkbcommon0 \
+        libxrandr2 \
+        libwayland-client0 \
+        fonts-liberation \
+        fonts-unifont \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app .
 COPY --from=build /ms-playwright /ms-playwright
-
-# Ставим только системные deps для Chromium (браузеры уже скопированы)
-RUN pwsh playwright.ps1 install-deps chromium
 
 EXPOSE 5000
 ENTRYPOINT ["dotnet", "WishHub.Api.dll"]

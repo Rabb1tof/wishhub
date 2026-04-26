@@ -1,0 +1,150 @@
+# =============================================
+# Registry-based Docker Compose for WishHub
+# =============================================
+#
+# This compose file pulls *prebuilt* images from GitHub Container Registry
+# (ghcr.io) instead of building them on the host. Use this on EasyPanel or
+# any other small VPS where you don't want to spend disk on build cache.
+#
+# Required environment variables (set in EasyPanel UI or .env):
+#   IMAGE_OWNER       - GHCR namespace, e.g. "rabb1t"
+#   IMAGE_TAG         - image tag to deploy, e.g. "latest" or "sha-abc1234"
+#   PUBLIC_URL        - public site URL, e.g. "https://wishhub.rabb1t.tech"
+#   POSTGRES_DB / POSTGRES_USER / POSTGRES_PASSWORD
+#   JWT_SECRET / JWT_ISSUER / JWT_AUDIENCE
+#   VK_CLIENT_ID / VK_CLIENT_SECRET
+#   TELEGRAM_BOT_TOKEN / TELEGRAM_BOT_USERNAME
+#   HANGFIRE_INTERVAL
+#
+# This file does NOT include an nginx service. The frontend container's own
+# nginx (see frontend/nginx.conf) serves static + proxies /api, /hubs,
+# /avatars to the api service. EasyPanel handles SSL/TLS termination on the
+# domain pointed at frontend:80.
+# =============================================
+
+services:
+  # =============================================
+  # PostgreSQL Database
+  # =============================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: wishhub-postgres
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - wishhub-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wishlist} -d ${POSTGRES_DB:-wishlist}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # =============================================
+  # Redis Cache
+  # =============================================
+  redis:
+    image: redis:7-alpine
+    container_name: wishhub-redis
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redisdata:/data
+    restart: unless-stopped
+    networks:
+      - wishhub-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # =============================================
+  # Backend API (.NET) - prebuilt image
+  # =============================================
+  api:
+    image: ghcr.io/${IMAGE_OWNER}/wishhub-api:${IMAGE_TAG:-latest}
+    container_name: wishhub-api
+    pull_policy: always
+    env_file:
+      - .env
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:5000
+
+      - ConnectionStrings__Default=Host=postgres;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - ConnectionStrings__Redis=redis:6379
+
+      - Jwt__Secret=${JWT_SECRET}
+      - Jwt__Issuer=${JWT_ISSUER}
+      - Jwt__Audience=${JWT_AUDIENCE}
+
+      - Frontend__Url=${PUBLIC_URL}
+
+      - OAuth__Vk__ClientId=${VK_CLIENT_ID}
+      - OAuth__Vk__ClientSecret=${VK_CLIENT_SECRET}
+      - OAuth__Vk__RedirectUri=${PUBLIC_URL}/api/auth/vk/callback
+
+      - OAuth__Telegram__BotToken=${TELEGRAM_BOT_TOKEN}
+      - OAuth__Telegram__BotUsername=${TELEGRAM_BOT_USERNAME}
+
+      - Hangfire__PriceUpdateIntervalHours=${HANGFIRE_INTERVAL}
+
+      - ImageProxy__CacheTtlHours=48
+      - ImageProxy__RequestTimeoutSeconds=10
+
+      - Logging__LogLevel__Default=Information
+      - Logging__LogLevel__Microsoft.AspNetCore=Warning
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - avatars:/app/wwwroot/avatars
+      - playwright_state:/app/playwright-state
+    restart: unless-stopped
+    networks:
+      - wishhub-network
+
+  # =============================================
+  # Frontend - prebuilt image
+  # Acts as the public entrypoint (port 80) and reverse-proxies /api, /hubs,
+  # /avatars to the api service.
+  # =============================================
+  frontend:
+    image: ghcr.io/${IMAGE_OWNER}/wishhub-frontend:${IMAGE_TAG:-latest}
+    container_name: wishhub-frontend
+    pull_policy: always
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+    restart: unless-stopped
+    networks:
+      - wishhub-network
+
+# =============================================
+# Volumes
+# =============================================
+volumes:
+  pgdata:
+    driver: local
+  redisdata:
+    driver: local
+  avatars:
+    driver: local
+  playwright_state:
+    driver: local
+
+# =============================================
+# Networks
+# =============================================
+networks:
+  wishhub-network:
+    driver: bridge
