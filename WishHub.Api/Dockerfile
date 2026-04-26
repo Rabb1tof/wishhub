@@ -10,15 +10,21 @@ ENV DOTNET_NOLOGO=true \
     DOTNET_CLI_TELEMETRY_OPTOUT=1 \
     NUGET_XMLDOC_MODE=skip
 
-# 1. Copy only project files for restore layer cache
+# 1. Copy only project files for restore layer cache.
+#
+# IMPORTANT: we deliberately do NOT use `--mount=type=cache` for the NuGet
+# folder here. Reason: BuildKit cache mounts are NOT preserved reliably across
+# separate `RUN` steps in GitHub Actions cache (`type=gha`). Layer caching is.
+# By restoring without a cache mount, packages land inside this layer, the
+# layer is uploaded to the GHA layer cache, and the next `RUN` (publish)
+# can see them.
 COPY WishHub.sln ./
 COPY WishHub.Core/*.csproj            WishHub.Core/
 COPY WishHub.Infrastructure/*.csproj  WishHub.Infrastructure/
 COPY WishHub.Parsing/*.csproj         WishHub.Parsing/
 COPY WishHub.Api/*.csproj             WishHub.Api/
 
-RUN --mount=type=cache,id=wishhub-nuget,target=/root/.nuget/packages \
-    dotnet restore WishHub.Api/WishHub.Api.csproj
+RUN dotnet restore WishHub.Api/WishHub.Api.csproj
 
 # 2. Copy the rest of the source
 COPY WishHub.Core/            WishHub.Core/
@@ -26,9 +32,9 @@ COPY WishHub.Infrastructure/  WishHub.Infrastructure/
 COPY WishHub.Parsing/         WishHub.Parsing/
 COPY WishHub.Api/             WishHub.Api/
 
-# 3. Publish (single combined build + publish step)
-RUN --mount=type=cache,id=wishhub-nuget,target=/root/.nuget/packages \
-    dotnet publish WishHub.Api/WishHub.Api.csproj \
+# 3. Publish — `--no-restore` is safe here because restore packages live in
+#    the previous layer (no cache mount → packages persisted in the layer).
+RUN dotnet publish WishHub.Api/WishHub.Api.csproj \
         -c Release \
         -o /app \
         --no-restore \
