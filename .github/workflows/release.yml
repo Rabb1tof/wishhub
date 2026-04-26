@@ -15,6 +15,15 @@ on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    # Manual re-run: if you change release.yml itself (e.g. add new assets)
+    # and want to apply it to an existing release, trigger this workflow
+    # from the Actions tab and provide the tag name.
+    inputs:
+      tag:
+        description: "Existing tag to (re)create the release for, e.g. v0.1.0"
+        required: true
+        type: string
 
 permissions:
   contents: write   # required to create the release
@@ -23,17 +32,28 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+      - name: Resolve tag (push event vs manual dispatch)
+        id: resolve_tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ steps.resolve_tag.outputs.tag }}
           # full history so the auto-generated commit list works correctly
           fetch-depth: 0
 
       - name: Extract version from tag
         id: version
         run: |
-          # github.ref_name is e.g. "v0.1.0" or "v1.2.3-rc.1"
-          TAG="${GITHUB_REF_NAME}"
+          # e.g. "v0.1.0" or "v1.2.3-rc.1"
+          TAG="${{ steps.resolve_tag.outputs.tag }}"
           VERSION="${TAG#v}"
           echo "tag=$TAG"          >> "$GITHUB_OUTPUT"
           echo "version=$VERSION"  >> "$GITHUB_OUTPUT"
@@ -66,6 +86,15 @@ jobs:
             echo "__EOF__"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Stage release assets
+        # Bundle a "ready-to-deploy kit": rename the registry compose to a
+        # plain docker-compose.yml so users can `wget` it and run
+        # `docker compose up -d` without hunting through the repo.
+        run: |
+          mkdir -p artifacts
+          cp docker-compose.registry.yml artifacts/docker-compose.yml
+          cp .env.example                artifacts/.env.example
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -75,9 +104,28 @@ jobs:
             ${{ steps.changelog.outputs.notes }}
 
             ---
-            **Container images for this release:**
+
+            ## Quick start
+
+            Download the two attached files (`docker-compose.yml` and `.env.example`) into an empty directory, then:
+
+            ```bash
+            cp .env.example .env
+            # edit .env — set IMAGE_TAG=${{ steps.version.outputs.tag }} and your secrets
+            docker compose up -d
+            ```
+
+            ## Container images
+
+            All images are public on GHCR — no auth needed for `docker pull`:
+
             - `ghcr.io/${{ github.repository_owner }}/wishhub-api:${{ steps.version.outputs.tag }}`
+            - `ghcr.io/${{ github.repository_owner }}/wishhub-api:${{ steps.version.outputs.version }}`
             - `ghcr.io/${{ github.repository_owner }}/wishhub-frontend:${{ steps.version.outputs.tag }}`
+            - `ghcr.io/${{ github.repository_owner }}/wishhub-frontend:${{ steps.version.outputs.version }}`
+          files: |
+            artifacts/docker-compose.yml
+            artifacts/.env.example
           generate_release_notes: true   # appends GitHub's auto-generated commit/PR list
           draft: false
           prerelease: ${{ steps.version.outputs.prerelease }}
