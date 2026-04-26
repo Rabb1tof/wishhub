@@ -34,9 +34,16 @@ RUN --mount=type=cache,id=wishhub-nuget,target=/root/.nuget/packages \
         --no-restore \
         /p:UseAppHost=false
 
-# 4. Download Playwright Chromium browser only (no apt deps here)
+# 4. Download Playwright Chromium browser only (no apt deps here).
+#    `playwright install chromium` ships TWO browsers by default:
+#      - chromium          (~542 MB, modern headless, what our code actually uses)
+#      - chromium_headless_shell (~304 MB, legacy headless, never invoked by us)
+#    plus ffmpeg (~3 MB, only needed for video recording).
+#    We strip the unused ones to save ~300 MB in the final image.
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-RUN pwsh /app/playwright.ps1 install chromium
+RUN pwsh /app/playwright.ps1 install chromium && \
+    rm -rf /ms-playwright/chromium_headless_shell-* \
+           /ms-playwright/ffmpeg-*
 
 # =============================================
 # Runtime stage

@@ -46,12 +46,31 @@ docker images wishhub-frontend:test --format "{{.Size}}"
 ```
 
 Ожидаемые размеры:
-- `wishhub-api:test` ≈ **550–650 МБ** (раньше было ~1.2 ГБ)
-- `wishhub-frontend:test` ≈ **50–60 МБ** (без изменений — финальный stage уже был nginx:alpine)
+- `wishhub-api:test` ≈ **1.35–1.40 ГБ** (раньше было ~1.81 ГБ; основная масса — это
+  Chromium-браузер ~542 МБ + apt-deps ~250 МБ + base aspnet ~220 МБ + app ~140 МБ).
+  Сильнее ужать без переписывания парсеров на `chromium-headless-shell` не получится —
+  сам браузер столько весит.
+- `wishhub-frontend:test` ≈ **90–100 МБ** (nginx:alpine + статический dist).
 
-Если размер API сильно больше 700 МБ — что-то пошло не так, проверь что в build-stage нет `--with-deps` (мы ставим apt-deps только в runtime).
+Если API сильно больше 1.5 ГБ — проверь, что в `WishHub.Api/Dockerfile` есть строка
+`rm -rf /ms-playwright/chromium_headless_shell-*` после `playwright install chromium` —
+без неё лишние ~300 МБ останутся.
 
-## Шаг 2. Запушить изменения и дать GH Actions собрать
+## Шаг 2. Сделать репозиторий публичным
+
+> **Зачем**: GitHub Actions для **public-репозиториев бесплатен и без лимитов**,
+> биллинг не требуется (это важно при ограниченных способах оплаты).
+> Для private репо нужны минуты Actions, привязанные к биллингу.
+> В исходниках секретов нет — все читаются из `.env` / EasyPanel UI, в репу не попадают.
+
+### 2.1 Перевести репо в public
+
+В GitHub: **Settings → General → Danger Zone → Change repository visibility →
+Make public**. Подтверди, введя имя репо.
+
+После этого GitHub Actions сразу заработает без какого-либо биллинга.
+
+### 2.2 Запустить первый билд
 
 ```bash
 git add .
@@ -59,7 +78,22 @@ git commit -m "ci: switch deploy to prebuilt images on GHCR"
 git push origin main
 ```
 
-В GitHub открой вкладку **Actions** — должен появиться запуск `Build and Push Docker Images`. Должны успешно отработать оба job'а (`build-api`, `build-frontend`). Длительность первого билда — 5–10 минут (без кэша); последующие билды на том же `main` — 2–4 минуты благодаря `cache-from: type=gha`.
+В GitHub открой вкладку **Actions** — должен появиться запуск
+`Build and Push Docker Images`. Оба job'а (`build-api`, `build-frontend`) идут
+параллельно на `ubuntu-latest`.
+
+Длительность:
+- **Первый билд**: 6–10 мин (без кэша, тянутся NuGet и npm пакеты)
+- **Последующие билды на той же ветке**: 2–4 мин (благодаря `cache-from: type=gha`)
+
+### 2.3 Если что-то пошло не так
+
+| Симптом | Причина | Решение |
+|---|---|---|
+| Workflow не запускается | Actions выключены в Settings | Settings → Actions → General → Allow all actions |
+| `denied: permission_denied: write_package` | Workflow без `packages: write` | Уже стоит в нашем workflow, но проверь права на репо |
+| Build падает на `dotnet restore` | Сетевой сбой / NuGet rate-limit | Просто перезапусти job — `re-run failed jobs` |
+| Очень долгий билд | Cache miss после крупного refactor'а | Норма — следующий билд будет быстрым |
 
 ## Шаг 3. Сделать пакеты публичными (или настроить registry credentials)
 
@@ -139,12 +173,42 @@ CI собирает только `linux/amd64`. Если у тебя ARM-сер�
 
 Используй `docker-compose.prod.yml` (старая схема со сборкой) — он остался рабочим.
 
+**На моей машине Docker занимает 13+ ГБ — это нормально?**
+
+Да. На локальной dev-машине Docker накапливает:
+- финальные images (~2-3 ГБ),
+- BuildKit cache (~5-7 ГБ — он отдельный от images),
+- volumes (БД, и т.п.),
+- остановленные контейнеры.
+
+Серверу EasyPanel ничего из этого не достанется — он только pull'ит готовый образ. Для локальной чистки:
+
+```bash
+# Снести build cache (безопасно, восстановится при следующем билде)
+docker builder prune -af
+
+# Снести dangling images (без тегов)
+docker image prune -f
+
+# Атомная: удалить ВСЁ что не используется (включая volumes — осторожно!)
+docker system prune -af --volumes
+```
+
+Build cache даёт **прирост скорости** на повторных билдах, поэтому совсем без него
+неудобно. Можно держать ~2-3 ГБ кэша как баланс.
+
 ## Размерный итог
 
 | | До | После |
 |---|---|---|
-| API runtime image | ~1.2 ГБ | ~600 МБ |
+| API runtime image | ~1.81 ГБ | **~1.37 ГБ** |
 | Frontend build image (промежуточный) | ~1.5 ГБ | ~500 МБ |
-| Frontend runtime image | ~55 МБ | ~55 МБ |
-| BuildKit cache на сервере | ~5–7 ГБ | **0** (сервер не собирает) |
-| Время редеплоя в EasyPanel | 8–12 мин | **30–60 сек** |
+| Frontend runtime image | ~93 МБ | ~93 МБ |
+| BuildKit cache на сервере (EasyPanel) | ~5–7 ГБ | **0** (сервер не собирает) |
+| Время редеплоя в EasyPanel | 8–12 мин | **30–60 сек** (просто `pull`) |
+
+> **Где осталось место**: ~542 МБ внутри API image — это сам Chromium-браузер,
+> без которого парсеры не работают. Дальнейшее ужатие требует переключения парсеров на
+> `chromium-headless-shell` (Channel = "chromium-headless-shell" в LaunchOptions) и
+> установки только этого варианта в Dockerfile. Это сэкономит ~300 МБ, но может ослабить
+> stealth-логику — оставлено как опциональное улучшение.

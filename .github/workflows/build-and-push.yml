@@ -3,6 +3,9 @@ name: Build and Push Docker Images
 # Builds both images (API + Frontend) and pushes them to GitHub Container
 # Registry (ghcr.io). EasyPanel pulls these prebuilt images instead of
 # building on the server, so the VPS doesn't waste disk on build cache.
+#
+# This workflow uses GitHub-hosted runners (ubuntu-latest), which are FREE
+# and UNLIMITED for public repositories — no billing required.
 
 on:
   push:
