@@ -1,0 +1,28 @@
+# =============================================
+# Local override for docker-compose.registry.yml
+# =============================================
+# Use this when you want to run the **production registry images** locally
+# on macOS for smoke-testing — without modifying docker-compose.registry.yml.
+#
+# Usage:
+#   docker compose -f docker-compose.registry.yml -f docker-compose.local.yml up -d
+#
+# What it does:
+#   - Publishes frontend on http://localhost:5173 (registry compose only `expose`s
+#     port 80 internally because EasyPanel's Traefik routes it; locally we need
+#     a published port to actually reach it).
+#   - Publishes api on http://localhost:5050 (for direct API debugging).
+#   - Loosens the api healthcheck start_period (Apple Silicon runs amd64 images
+#     under emulation, so .NET + Chromium take longer to boot).
+# =============================================
+
+services:
+  frontend:
+    ports:
+      - "5173:80"
+
+  api:
+    ports:
+      - "5050:5000"
+    healthcheck:
+      start_period: 180s   # amd64-on-arm64 emulation needs more warm-up time

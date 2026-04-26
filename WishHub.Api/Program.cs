@@ -112,6 +112,9 @@ public class Program
             });
         builder.Services.AddEndpointsApiExplorer();
 
+        // Health checks (used by docker HEALTHCHECK and EasyPanel)
+        builder.Services.AddHealthChecks();
+
         // CORS
         builder.Services.AddCors(options =>
         {
@@ -175,6 +178,7 @@ public class Program
 
         app.MapControllers();
         app.MapHub<ChatHub>("/hubs/chat");
+        app.MapHealthChecks("/health");
 
         // Hangfire Dashboard (basic auth recommended for production)
         app.UseHangfireDashboard("/hangfire", new DashboardOptions

@@ -1,25 +1,27 @@
 # =============================================
-# Registry-based Docker Compose for WishHub
+# Registry-based Docker Compose for WishHub on EasyPanel
 # =============================================
 #
 # This compose file pulls *prebuilt* images from GitHub Container Registry
-# (ghcr.io) instead of building them on the host. Use this on EasyPanel or
-# any other small VPS where you don't want to spend disk on build cache.
+# (ghcr.io/rabb1tof/wishhub-{api,frontend}) instead of building on the host.
 #
-# Required environment variables (set in EasyPanel UI or .env):
-#   IMAGE_OWNER       - GHCR namespace, e.g. "rabb1t"
-#   IMAGE_TAG         - image tag to deploy, e.g. "latest" or "sha-abc1234"
+# Designed for EasyPanel deploy:
+#   - No custom `networks:` block — EasyPanel attaches services to its own
+#     project network and (for the public service) the shared Traefik network
+#     so SSL termination happens automatically.
+#   - No `ports:` on the frontend — EasyPanel routes the domain to it via
+#     Traefik directly through the Docker network. Publishing port 80 to
+#     the host would CONFLICT with EasyPanel's own Traefik on :80/:443.
+#
+# Required environment variables (set them in EasyPanel → Project → Env):
+#   IMAGE_OWNER       - GHCR namespace (lowercase), e.g. "rabb1tof"
+#   IMAGE_TAG         - image tag to deploy: "latest" | "sha-abc1234" | "v1.0.0"
 #   PUBLIC_URL        - public site URL, e.g. "https://wishhub.rabb1t.tech"
 #   POSTGRES_DB / POSTGRES_USER / POSTGRES_PASSWORD
 #   JWT_SECRET / JWT_ISSUER / JWT_AUDIENCE
 #   VK_CLIENT_ID / VK_CLIENT_SECRET
 #   TELEGRAM_BOT_TOKEN / TELEGRAM_BOT_USERNAME
-#   HANGFIRE_INTERVAL
-#
-# This file does NOT include an nginx service. The frontend container's own
-# nginx (see frontend/nginx.conf) serves static + proxies /api, /hubs,
-# /avatars to the api service. EasyPanel handles SSL/TLS termination on the
-# domain pointed at frontend:80.
+#   HANGFIRE_INTERVAL (e.g. 8)
 # =============================================
 
 services:
@@ -28,9 +30,6 @@ services:
   # =============================================
   postgres:
     image: postgres:16-alpine
-    container_name: wishhub-postgres
-    env_file:
-      - .env
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -38,10 +37,8 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     restart: unless-stopped
-    networks:
-      - wishhub-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wishlist} -d ${POSTGRES_DB:-wishlist}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -51,13 +48,10 @@ services:
   # =============================================
   redis:
     image: redis:7-alpine
-    container_name: wishhub-redis
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     volumes:
       - redisdata:/data
     restart: unless-stopped
-    networks:
-      - wishhub-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -65,86 +59,79 @@ services:
       retries: 5
 
   # =============================================
-  # Backend API (.NET) - prebuilt image
+  # Backend API (.NET)
   # =============================================
   api:
     image: ghcr.io/${IMAGE_OWNER}/wishhub-api:${IMAGE_TAG:-latest}
-    container_name: wishhub-api
     pull_policy: always
-    env_file:
-      - .env
-    environment:
-      - ASPNETCORE_ENVIRONMENT=Production
-      - ASPNETCORE_URLS=http://+:5000
-
-      - ConnectionStrings__Default=Host=postgres;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
-      - ConnectionStrings__Redis=redis:6379
-
-      - Jwt__Secret=${JWT_SECRET}
-      - Jwt__Issuer=${JWT_ISSUER}
-      - Jwt__Audience=${JWT_AUDIENCE}
-
-      - Frontend__Url=${PUBLIC_URL}
-
-      - OAuth__Vk__ClientId=${VK_CLIENT_ID}
-      - OAuth__Vk__ClientSecret=${VK_CLIENT_SECRET}
-      - OAuth__Vk__RedirectUri=${PUBLIC_URL}/api/auth/vk/callback
-
-      - OAuth__Telegram__BotToken=${TELEGRAM_BOT_TOKEN}
-      - OAuth__Telegram__BotUsername=${TELEGRAM_BOT_USERNAME}
-
-      - Hangfire__PriceUpdateIntervalHours=${HANGFIRE_INTERVAL}
-
-      - ImageProxy__CacheTtlHours=48
-      - ImageProxy__RequestTimeoutSeconds=10
-
-      - Logging__LogLevel__Default=Information
-      - Logging__LogLevel__Microsoft.AspNetCore=Warning
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:5000
+
+      ConnectionStrings__Default: Host=postgres;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      ConnectionStrings__Redis: redis:6379
+
+      Jwt__Secret: ${JWT_SECRET}
+      Jwt__Issuer: ${JWT_ISSUER}
+      Jwt__Audience: ${JWT_AUDIENCE}
+
+      Frontend__Url: ${PUBLIC_URL}
+
+      OAuth__Vk__ClientId: ${VK_CLIENT_ID}
+      OAuth__Vk__ClientSecret: ${VK_CLIENT_SECRET}
+      OAuth__Vk__RedirectUri: ${PUBLIC_URL}/api/auth/vk/callback
+
+      OAuth__Telegram__BotToken: ${TELEGRAM_BOT_TOKEN}
+      OAuth__Telegram__BotUsername: ${TELEGRAM_BOT_USERNAME}
+
+      Hangfire__PriceUpdateIntervalHours: ${HANGFIRE_INTERVAL:-8}
+
+      ImageProxy__CacheTtlHours: "48"
+      ImageProxy__RequestTimeoutSeconds: "10"
+
+      Logging__LogLevel__Default: Information
+      Logging__LogLevel__Microsoft.AspNetCore: Warning
     volumes:
       - avatars:/app/wwwroot/avatars
       - playwright_state:/app/playwright-state
-    restart: unless-stopped
-    networks:
-      - wishhub-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s   # Playwright/Chromium initialization can take up to a minute
 
   # =============================================
-  # Frontend - prebuilt image
-  # Acts as the public entrypoint (port 80) and reverse-proxies /api, /hubs,
-  # /avatars to the api service.
+  # Frontend (nginx + built dist) — public entrypoint
   # =============================================
+  # Reverse-proxies /api, /hubs, /avatars to the api service through the
+  # internal Docker network. EasyPanel routes the public domain here via Traefik.
   frontend:
     image: ghcr.io/${IMAGE_OWNER}/wishhub-frontend:${IMAGE_TAG:-latest}
-    container_name: wishhub-frontend
     pull_policy: always
-    depends_on:
-      - api
-    ports:
-      - "80:80"
     restart: unless-stopped
-    networks:
-      - wishhub-network
+    depends_on:
+      api:
+        condition: service_healthy
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 # =============================================
 # Volumes
 # =============================================
 volumes:
   pgdata:
-    driver: local
   redisdata:
-    driver: local
   avatars:
-    driver: local
   playwright_state:
-    driver: local
-
-# =============================================
-# Networks
-# =============================================
-networks:
-  wishhub-network:
-    driver: bridge

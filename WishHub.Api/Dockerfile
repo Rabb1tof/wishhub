@@ -59,6 +59,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
 # List taken from Playwright nativeDeps for chromium. We do NOT install pwsh
 # in the runtime stage — that's where most of the bloat used to come from.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        # Chromium runtime deps
         libasound2 \
         libatk-bridge2.0-0 \
         libatk1.0-0 \
@@ -83,6 +84,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libwayland-client0 \
         fonts-liberation \
         fonts-unifont \
+        # wget — for container HEALTHCHECK
+        wget \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app .

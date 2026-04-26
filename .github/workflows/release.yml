@@ -1,0 +1,83 @@
+name: Create GitHub Release
+
+# Triggered when you push a SemVer tag (v0.1.0, v1.2.3, v2.0.0-rc.1, …).
+# Combined with `.github/workflows/build-and-push.yml` (which is also triggered
+# by `v*.*.*` tags), this gives a clean release flow:
+#
+#   git tag v0.2.0
+#   git push origin v0.2.0
+#
+# After the push:
+#   - build-and-push.yml builds & publishes ghcr.io/.../wishhub-{api,frontend}:v0.2.0
+#   - release.yml      creates a GitHub Release with notes pulled from CHANGELOG.md
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write   # required to create the release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # full history so the auto-generated commit list works correctly
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          # github.ref_name is e.g. "v0.1.0" or "v1.2.3-rc.1"
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG"          >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION"  >> "$GITHUB_OUTPUT"
+          # Detect prerelease (anything after a hyphen: -rc, -beta, -alpha…)
+          if [[ "$VERSION" == *-* ]]; then
+            echo "prerelease=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Extract release notes from CHANGELOG.md
+        id: changelog
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          # Pull the section between "## [VERSION]" and the next "## [" header.
+          # Falls back to a placeholder if no matching section is found.
+          NOTES=$(awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" { flag=1; next }
+            flag && $0 ~ "^## \\["  { flag=0 }
+            flag                   { print }
+          ' CHANGELOG.md)
+
+          if [ -z "$NOTES" ]; then
+            NOTES="_No CHANGELOG.md entry was found for this version. See the commit list below._"
+          fi
+
+          {
+            echo "notes<<__EOF__"
+            echo "$NOTES"
+            echo "__EOF__"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          body: |
+            ${{ steps.changelog.outputs.notes }}
+
+            ---
+            **Container images for this release:**
+            - `ghcr.io/${{ github.repository_owner }}/wishhub-api:${{ steps.version.outputs.tag }}`
+            - `ghcr.io/${{ github.repository_owner }}/wishhub-frontend:${{ steps.version.outputs.tag }}`
+          generate_release_notes: true   # appends GitHub's auto-generated commit/PR list
+          draft: false
+          prerelease: ${{ steps.version.outputs.prerelease }}

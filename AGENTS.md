@@ -17,13 +17,14 @@ Read it fully before touching any file. Re-read the relevant sections before eac
 8. [Database & Migrations](#database--migrations)
 9. [Testing Requirements](#testing-requirements)
 10. [Git Conventions](#git-conventions)
-11. [What You Must Never Do](#what-you-must-never-do)
+11. [Release Process](#release-process)
+12. [What You Must Never Do](#what-you-must-never-do)
 
 ---
 
 ## Project Overview
 
-**Wishlist** is a full-stack web application where users can:
+**WishHub** is a full-stack web application where users can:
 - Add products from Ozon, Wildberries, and Yandex Market by pasting a URL — the app parses price, name, and image automatically
 - Manage a personal wishlist with filters, sorting, and custom item names
 - Follow other users, send friend requests, and browse friends' wishlists
@@ -55,27 +56,41 @@ Read it fully before touching any file. Re-read the relevant sections before eac
 
 ```
 /
-├── AGENTS.md                  ← you are here
-├── plan.md                    ← task checklist — your source of truth
-├── docker-compose.yml         ← local dev infrastructure (postgres, redis)
-├── docker-compose.prod.yml    ← production stack
-├── WishList.sln
+├── README.md                       ← public-facing project overview & links
+├── AGENTS.md                       ← you are here (rules for AI agents)
+├── plan.md                         ← task checklist — your source of truth
+├── CHANGELOG.md                    ← Keep-a-Changelog release history
+├── LICENSE                         ← MIT
 │
-├── WishList.Api/              ← ASP.NET Core entry point
+├── DEPLOY-OPTIMIZED.md             ← prod deploy via GHCR + EasyPanel (recommended)
+├── EASYPANEL.md                    ← legacy EasyPanel (build-on-server) deploy
+├── DEPLOY.md                       ← bare-VPS manual deploy with nginx + certbot
+├── CONFIGURATION.md                ← env / appsettings layout reference
+│
+├── docker-compose.yml              ← dev: postgres + redis only
+├── docker-compose.dev.yml          ← dev: full stack with build for container tests
+├── docker-compose.prod.yml         ← prod: build-on-server (legacy)
+├── docker-compose.registry.yml     ← prod: pull prebuilt images from GHCR
+├── docker-compose.local.yml        ← local override on top of registry.yml
+│
+├── WishHub.sln
+│
+├── WishHub.Api/                    ← ASP.NET Core entry point
 │   ├── Controllers/
-│   ├── Hubs/                  ← SignalR hubs
+│   ├── Hubs/                       ← SignalR hubs
 │   ├── Middleware/
-│   ├── Extensions/            ← IServiceCollection extension methods
+│   ├── Extensions/                 ← IServiceCollection extension methods
+│   ├── Dockerfile
 │   ├── Program.cs
 │   └── appsettings.json
 │
-├── WishList.Core/             ← Domain layer — no framework dependencies
+├── WishHub.Core/                   ← Domain layer — no framework dependencies
 │   ├── Entities/
 │   ├── Interfaces/
 │   ├── DTOs/
 │   └── Exceptions/
 │
-├── WishList.Infrastructure/   ← EF Core, repositories, background jobs
+├── WishHub.Infrastructure/         ← EF Core, repositories, background jobs
 │   ├── Data/
 │   │   ├── AppDbContext.cs
 │   │   ├── Configurations/
@@ -84,30 +99,39 @@ Read it fully before touching any file. Re-read the relevant sections before eac
 │   ├── Services/
 │   └── BackgroundJobs/
 │
-├── WishList.Parsing/          ← Product scrapers, isolated from the rest
+├── WishHub.Parsing/                ← Product scrapers, isolated from the rest
 │   ├── Parsers/
+│   ├── Playwright/
+│   ├── Ozon/
 │   ├── ParserFactory.cs
 │   └── Models/
 │
-├── WishList.Tests/            ← xUnit tests
+├── WishHub.Tests/                  ← xUnit tests
 │   ├── Parsing/
 │   ├── Api/
 │   └── Infrastructure/
 │
-└── frontend/                  ← React + Vite app
-    └── src/
-        ├── api/
-        ├── components/
-        ├── hooks/
-        ├── pages/
-        ├── store/
-        └── types/
+├── frontend/                       ← React + Vite app
+│   ├── Dockerfile
+│   ├── nginx.conf                  ← reverse-proxy config for prod image
+│   └── src/
+│       ├── api/
+│       ├── components/
+│       ├── hooks/
+│       ├── pages/
+│       ├── store/
+│       └── types/
+│
+├── scripts/                        ← shell helpers (build-and-push, dev-tunnel, sync-env)
+│
+└── .github/workflows/
+    └── build-and-push.yml          ← CI: build + push images to GHCR
 ```
 
 **Dependency rules (enforced):**
-- `WishList.Core` has zero references to EF Core, ASP.NET, or any infrastructure library
-- `WishList.Parsing` references only `WishList.Core` and parsing libraries
-- `WishList.Api` never contains business logic — only wires things together
+- `WishHub.Core` has zero references to EF Core, ASP.NET, or any infrastructure library
+- `WishHub.Parsing` references only `WishHub.Core` and parsing libraries
+- `WishHub.Api` never contains business logic — only wires things together
 - Circular project references are forbidden
 
 ---
@@ -161,18 +185,18 @@ Read it fully before touching any file. Re-read the relevant sections before eac
 
 ```bash
 # 1. Start infrastructure
-docker-compose up -d
+docker compose up -d
 
 # 2. Restore backend
 dotnet restore
 
 # 3. Apply migrations
 dotnet ef database update \
-  --project WishList.Infrastructure \
-  --startup-project WishList.Api
+  --project WishHub.Infrastructure \
+  --startup-project WishHub.Api
 
 # 4. Run backend
-dotnet run --project WishList.Api
+dotnet run --project WishHub.Api
 
 # 5. Install frontend dependencies
 cd frontend && npm install
@@ -184,11 +208,20 @@ npm run dev
 Backend runs on `http://localhost:5000`.
 Frontend runs on `http://localhost:5173` and proxies `/api` and `/hubs` to the backend.
 
+### Smoke-testing the production images locally
+
+```bash
+docker compose -f docker-compose.registry.yml -f docker-compose.local.yml up -d
+```
+
+Frontend on `http://localhost:5173`, API on `http://localhost:5050`. See `README.md` for env setup.
+
 ### Environment variables
 
-Secrets go in `WishList.Api/appsettings.Development.json` (git-ignored).
+Secrets go in `WishHub.Api/appsettings.Development.json` (git-ignored).
 Never hardcode secrets. Never commit secrets.
 Required keys are listed in `appsettings.json` with placeholder values like `"REPLACE_ME"`.
+For production deploy, secrets come from `.env` (also git-ignored) — see `CONFIGURATION.md`.
 
 ---
 
@@ -229,7 +262,7 @@ If a task requires installing a new NuGet or npm package, add it to the correct 
 ### Controllers
 
 - Controllers are thin. They validate input, call a service, and return a DTO.
-- Business logic belongs in `WishList.Infrastructure/Services/` or `WishList.Core/`.
+- Business logic belongs in `WishHub.Infrastructure/Services/` or `WishHub.Core/`.
 - Return types: use `ActionResult<T>` and appropriate HTTP status codes.
   - `200 OK` — successful GET or PATCH
   - `201 Created` with `Location` header — successful POST that creates a resource
@@ -244,18 +277,18 @@ If a task requires installing a new NuGet or npm package, add it to the correct 
 
 - Requests: suffix `Request` (e.g. `AddWishlistItemRequest`)
 - Responses: suffix `Dto` (e.g. `WishlistItemDto`)
-- Keep request and response DTOs in separate files under `WishList.Core/DTOs/`
+- Keep request and response DTOs in separate files under `WishHub.Core/DTOs/`
 - Never expose EF entities directly from controllers
 
 ### Error handling
 
 - All unhandled exceptions are caught by `ExceptionHandlingMiddleware` and returned as `ProblemDetails`
-- Throw domain exceptions from `WishList.Core/Exceptions/` for expected error states
+- Throw domain exceptions from `WishHub.Core/Exceptions/` for expected error states
 - Do not swallow exceptions silently — log at `Error` level and rethrow or convert
 
 ### Dependency injection
 
-- Register services in `WishList.Api/Extensions/ServiceCollectionExtensions.cs` using extension methods grouped by feature (e.g. `AddParsing()`, `AddAuth()`, `AddHangfire()`)
+- Register services in `WishHub.Api/Extensions/ServiceCollectionExtensions.cs` using extension methods grouped by feature (e.g. `AddParsing()`, `AddAuth()`, `AddHangfire()`)
 - Use `AddScoped` for services that touch DbContext, `AddSingleton` for stateless services (e.g. `ParserFactory`, `IPlaywrightBrowserPool`)
 
 ### Validation
@@ -320,18 +353,18 @@ If a task requires installing a new NuGet or npm package, add it to the correct 
 ```bash
 # Add a migration
 dotnet ef migrations add <MigrationName> \
-  --project WishList.Infrastructure \
-  --startup-project WishList.Api
+  --project WishHub.Infrastructure \
+  --startup-project WishHub.Api
 
 # Remove last migration (only if not applied)
 dotnet ef migrations remove \
-  --project WishList.Infrastructure \
-  --startup-project WishList.Api
+  --project WishHub.Infrastructure \
+  --startup-project WishHub.Api
 
 # Apply migrations
 dotnet ef database update \
-  --project WishList.Infrastructure \
-  --startup-project WishList.Api
+  --project WishHub.Infrastructure \
+  --startup-project WishHub.Api
 ```
 
 ---
@@ -340,7 +373,7 @@ dotnet ef database update \
 
 - Every new service method must have at least one unit test.
 - Every new controller endpoint must have at least one integration test.
-- Tests live in `WishList.Tests/` mirroring the source project structure.
+- Tests live in `WishHub.Tests/` mirroring the source project structure.
 - Integration tests use `WebApplicationFactory<Program>` + `Testcontainers.PostgreSql` (a real DB spun up in Docker).
 - Parser tests that hit real URLs are tagged `[Trait("Category", "Integration")]` and are excluded from the default test run.
 - Test naming: `MethodName_StateUnderTest_ExpectedBehavior`
@@ -402,6 +435,88 @@ test(parsing): add unit tests for OzonParser HTML fallback
 - Commits should be atomic — one logical change per commit.
 - Do not commit commented-out code.
 - Do not commit `appsettings.Development.json` or any file containing secrets.
+
+---
+
+## Release Process
+
+WishHub follows [Semantic Versioning](https://semver.org/). Releases are
+**tag-driven**: pushing a tag of the form `vMAJOR.MINOR.PATCH` (or a
+prerelease like `v0.2.0-rc.1`) automatically does two things:
+
+1. `.github/workflows/build-and-push.yml` builds and publishes container
+   images tagged with all useful aliases:
+   `v0.1.0`, `0.1.0`, `0.1`, `sha-abc1234` (and `latest` only on main pushes).
+2. `.github/workflows/release.yml` creates a **GitHub Release**, pulling its
+   body from the matching `## [VERSION]` section in `CHANGELOG.md` and
+   appending GitHub's auto-generated commit / PR list.
+
+### Cutting a release — exact steps
+
+```bash
+# 1. Make sure main is clean and tests pass
+git checkout main
+git pull
+dotnet test --filter "Category!=Integration"
+cd frontend && npx tsc --noEmit && cd ..
+
+# 2. Update CHANGELOG.md:
+#    - move items from [Unreleased] into a new "## [X.Y.Z] — YYYY-MM-DD" section
+#    - keep an empty [Unreleased] header on top for the next cycle
+
+# 3. Commit the changelog
+git add CHANGELOG.md
+git commit -m "chore(release): vX.Y.Z"
+
+# 4. Tag and push (this is what triggers both workflows)
+git tag vX.Y.Z
+git push origin main
+git push origin vX.Y.Z
+```
+
+Within ~5–10 minutes:
+- New images appear in `ghcr.io/<owner>/wishhub-{api,frontend}` under all
+  five tag aliases.
+- A new GitHub Release shows up at `/releases/tag/vX.Y.Z`.
+- EasyPanel can be redeployed with `IMAGE_TAG=vX.Y.Z` to pin the production
+  stack to that exact version (or stay on `latest` for rolling updates).
+
+### Version bump rules
+
+Use Conventional Commits (already enforced by `Git Conventions` above) so the
+right bump is obvious:
+
+| Change kind | Bump | Example |
+|---|---|---|
+| `feat:` | minor — `0.1.0 → 0.2.0` | new endpoint, new UI feature |
+| `fix:` / `chore:` / `docs:` / `refactor:` | patch — `0.1.0 → 0.1.1` | bug fix, deps update |
+| `feat!:` or `BREAKING CHANGE:` footer | major — `0.1.0 → 1.0.0` | API contract change, schema migration without `Down()` |
+
+While the project is `0.x`, **anything goes** — minor bumps may include
+breaking changes. Once we hit `1.0.0`, strict SemVer applies.
+
+### Hotfix flow
+
+For an urgent fix on a release that's already deployed:
+
+```bash
+git checkout vX.Y.Z
+git checkout -b hotfix/short-description
+# … fix it, commit it …
+git tag vX.Y.(Z+1)
+git push origin hotfix/short-description
+git push origin vX.Y.(Z+1)
+```
+
+Open a PR back to `main` afterwards so the fix doesn't get lost.
+
+### Things that are intentionally NOT automated
+
+- **Bumping the version in `CHANGELOG.md` is manual.** This is by design —
+  the release notes are the most user-facing artifact in the project, and
+  letting a bot write them produces low-quality output.
+- **No auto-merge of release PRs.** A human always reviews the changelog
+  before tagging.
 
 ---
 
