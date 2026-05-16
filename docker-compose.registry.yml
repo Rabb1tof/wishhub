@@ -14,8 +14,8 @@
 #     the host would CONFLICT with EasyPanel's own Traefik on :80/:443.
 #
 # Required environment variables (set them in EasyPanel → Project → Env):
-#   IMAGE_OWNER       - GHCR namespace (lowercase), e.g. "rabb1tof"
-#   IMAGE_TAG         - image tag to deploy: "latest" | "sha-abc1234" | "v1.0.0"
+#   IMAGE_OWNER       - GHCR namespace (lowercase), defaults to "rabb1tof"
+#   IMAGE_TAG         - image tag to deploy, defaults to "latest"
 #   PUBLIC_URL        - public site URL, e.g. "https://wishhub.rabb1t.tech"
 #   POSTGRES_DB / POSTGRES_USER / POSTGRES_PASSWORD
 #   JWT_SECRET / JWT_ISSUER / JWT_AUDIENCE
@@ -62,7 +62,7 @@ services:
   # Backend API (.NET)
   # =============================================
   api:
-    image: ghcr.io/${IMAGE_OWNER}/wishhub-api:${IMAGE_TAG:-latest}
+    image: ghcr.io/${IMAGE_OWNER:-rabb1tof}/wishhub-api:${IMAGE_TAG:-latest}
     pull_policy: always
     restart: unless-stopped
     depends_on:
@@ -113,7 +113,7 @@ services:
   # Reverse-proxies /api, /hubs, /avatars to the api service through the
   # internal Docker network. EasyPanel routes the public domain here via Traefik.
   frontend:
-    image: ghcr.io/${IMAGE_OWNER}/wishhub-frontend:${IMAGE_TAG:-latest}
+    image: ghcr.io/${IMAGE_OWNER:-rabb1tof}/wishhub-frontend:${IMAGE_TAG:-latest}
     pull_policy: always
     restart: unless-stopped
     depends_on:

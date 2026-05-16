@@ -999,6 +999,7 @@ ENTRYPOINT ["dotnet", "WishHub.Api.dll"]
 - [x] Добавить сервис `frontend` (билд из `frontend/Dockerfile`)
 - [x] Все секреты через `.env` файл (не в git)
 - [x] `volumes` для `wwwroot/avatars/`
+- [x] `docker-compose.registry.yml` для EasyPanel/GHCR с дефолтным `IMAGE_OWNER`
 
 ### 14.3 Миграции при старте
 
