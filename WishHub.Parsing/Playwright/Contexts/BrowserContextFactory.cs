@@ -74,6 +74,7 @@ public sealed class BrowserContextFactory : IBrowserContextFactory
     {
         var options = new BrowserTypeLaunchOptions
         {
+            Channel = "chromium",
             Headless = !string.Equals(
                 Environment.GetEnvironmentVariable("PLAYWRIGHT_HEADLESS"),
                 "false",

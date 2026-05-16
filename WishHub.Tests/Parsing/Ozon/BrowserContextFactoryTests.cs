@@ -96,6 +96,7 @@ public class BrowserContextFactoryTests
 
         options.Proxy.Should().NotBeNull();
         options.Proxy!.Server.Should().Be("http://user:pass@127.0.0.1:8080");
+        options.Channel.Should().Be("chromium");
         options.Args.Should().Contain("--disable-blink-features=AutomationControlled");
         options.Args.Should().Contain("--disable-site-isolation-trials");
     }

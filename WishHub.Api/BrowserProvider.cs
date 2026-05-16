@@ -58,6 +58,7 @@ public class BrowserProvider : IDisposable
 
                 _browser = _playwright!.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
                 {
+                    Channel = "chromium",
                     Headless = headless,
                     Args = new[]
                     {
