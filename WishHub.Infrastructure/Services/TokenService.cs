@@ -20,10 +20,10 @@ public class TokenService : ITokenService
 
     public string GenerateAccessToken(User user)
     {
-        var secret = _configuration["Jwt:Secret"]!;
-        var issuer = _configuration["Jwt:Issuer"]!;
-        var audience = _configuration["Jwt:Audience"]!;
-        var expiryMinutes = int.Parse(_configuration["Jwt:AccessTokenExpiryMinutes"]!);
+        var secret = GetRequiredConfigurationValue("Jwt:Secret");
+        var issuer = GetRequiredConfigurationValue("Jwt:Issuer");
+        var audience = GetRequiredConfigurationValue("Jwt:Audience");
+        var expiryMinutes = GetRequiredPositiveIntConfigurationValue("Jwt:AccessTokenExpiryMinutes");
 
         var key = new SymmetricSecurityKey(Encoding.ASCII.GetBytes(secret));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
@@ -48,7 +48,7 @@ public class TokenService : ITokenService
 
     public RefreshToken GenerateRefreshToken(Guid userId)
     {
-        var expiryDays = int.Parse(_configuration["Jwt:RefreshTokenExpiryDays"]!);
+        var expiryDays = GetRequiredPositiveIntConfigurationValue("Jwt:RefreshTokenExpiryDays");
 
         return new RefreshToken
         {
@@ -63,7 +63,7 @@ public class TokenService : ITokenService
 
     public ClaimsPrincipal? GetPrincipalFromExpiredToken(string token)
     {
-        var secret = _configuration["Jwt:Secret"]!;
+        var secret = GetRequiredConfigurationValue("Jwt:Secret");
         var key = new SymmetricSecurityKey(Encoding.ASCII.GetBytes(secret));
 
         var validationParameters = new TokenValidationParameters
@@ -85,5 +85,27 @@ public class TokenService : ITokenService
         {
             return null;
         }
+    }
+
+    private string GetRequiredConfigurationValue(string key)
+    {
+        var value = _configuration[key];
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new InvalidOperationException($"Required configuration value '{key}' is missing.");
+        }
+
+        return value;
+    }
+
+    private int GetRequiredPositiveIntConfigurationValue(string key)
+    {
+        var value = GetRequiredConfigurationValue(key);
+        if (!int.TryParse(value, out var parsedValue) || parsedValue <= 0)
+        {
+            throw new InvalidOperationException($"Configuration value '{key}' must be a positive integer.");
+        }
+
+        return parsedValue;
     }
 }

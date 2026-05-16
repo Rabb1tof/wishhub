@@ -19,6 +19,7 @@
 #   PUBLIC_URL        - public site URL, e.g. "https://wishhub.rabb1t.tech"
 #   POSTGRES_DB / POSTGRES_USER / POSTGRES_PASSWORD
 #   JWT_SECRET / JWT_ISSUER / JWT_AUDIENCE
+#   JWT_ACCESS_TOKEN_EXPIRY_MINUTES / JWT_REFRESH_TOKEN_EXPIRY_DAYS
 #   VK_CLIENT_ID / VK_CLIENT_SECRET
 #   TELEGRAM_BOT_TOKEN / TELEGRAM_BOT_USERNAME
 #   HANGFIRE_INTERVAL (e.g. 8)
@@ -80,6 +81,8 @@ services:
       Jwt__Secret: ${JWT_SECRET}
       Jwt__Issuer: ${JWT_ISSUER}
       Jwt__Audience: ${JWT_AUDIENCE}
+      Jwt__AccessTokenExpiryMinutes: ${JWT_ACCESS_TOKEN_EXPIRY_MINUTES:-60}
+      Jwt__RefreshTokenExpiryDays: ${JWT_REFRESH_TOKEN_EXPIRY_DAYS:-30}
 
       Frontend__Url: ${PUBLIC_URL}
 
