@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-05-16
+
+### Fixed
+
+- Fix EasyPanel registry deploy when `IMAGE_OWNER` is not provided by using
+  `rabb1tof` as the default GHCR namespace in `docker-compose.registry.yml`.
+- Fix production sign-up/sign-in token generation by explicitly passing
+  `Jwt__AccessTokenExpiryMinutes` and `Jwt__RefreshTokenExpiryDays` through
+  deploy compose files.
+- Improve JWT configuration validation so missing or invalid token lifetime
+  settings fail with a clear configuration error instead of
+  `ArgumentNullException`.
+
+### Changed
+
+- Document JWT token lifetime environment variables in `.env.example`.
+
 ## [0.1.0] — 2026-04-27
 
 > 🐣 **First public test release.** This is an early build intended for closed
@@ -72,5 +89,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   namespace (was previously a mix of `WishList.*` and `WishHub.*` in some docs).
 - Documentation reshuffled — see `README.md` for the current map.
 
-[unreleased]: https://github.com/Rabb1tof/wishhub/compare/v0.1.0...HEAD
+[unreleased]: https://github.com/Rabb1tof/wishhub/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/Rabb1tof/wishhub/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Rabb1tof/wishhub/releases/tag/v0.1.0
