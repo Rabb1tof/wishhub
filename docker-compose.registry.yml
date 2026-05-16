@@ -23,6 +23,7 @@
 #   VK_CLIENT_ID / VK_CLIENT_SECRET
 #   TELEGRAM_BOT_TOKEN / TELEGRAM_BOT_USERNAME
 #   HANGFIRE_INTERVAL (e.g. 8)
+#   COMPOSE_PROFILES=cloakbrowser + CLOAKBROWSER_CDP_URL=http://cloakbrowser:9222
 # =============================================
 
 services:
@@ -58,6 +59,24 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # =============================================
+  # CloakBrowser CDP sidecar (stealth Chromium)
+  # =============================================
+  cloakbrowser:
+    image: cloakhq/cloakbrowser:${CLOAKBROWSER_TAG:-latest}
+    command: cloakserve
+    restart: unless-stopped
+    profiles:
+      - cloakbrowser
+    expose:
+      - "9222"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9222/json/version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   # =============================================
   # Backend API (.NET)
@@ -97,6 +116,8 @@ services:
 
       ImageProxy__CacheTtlHours: "48"
       ImageProxy__RequestTimeoutSeconds: "10"
+
+      CLOAKBROWSER_CDP_URL: ${CLOAKBROWSER_CDP_URL:-}
 
       Logging__LogLevel__Default: Information
       Logging__LogLevel__Microsoft.AspNetCore: Warning

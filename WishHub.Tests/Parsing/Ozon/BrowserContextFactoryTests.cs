@@ -28,6 +28,7 @@ public class BrowserContextFactoryTests
             screenHeight: 1080);
 
         BrowserTypeLaunchOptions? launchOptions = null;
+        ChromiumBrowserIdentity? browserIdentity = null;
         BrowserNewContextOptions? contextOptions = null;
         IDictionary<string, string>? headers = null;
         string? script = null;
@@ -38,8 +39,15 @@ public class BrowserContextFactoryTests
         var scriptFactory = new Mock<IStealthInitScriptFactory>();
 
         launcher
-            .Setup(x => x.LaunchAsync(It.IsAny<BrowserTypeLaunchOptions>(), It.IsAny<CancellationToken>()))
-            .Callback<BrowserTypeLaunchOptions, CancellationToken>((options, _) => launchOptions = options)
+            .Setup(x => x.LaunchAsync(
+                It.IsAny<BrowserTypeLaunchOptions>(),
+                It.IsAny<ChromiumBrowserIdentity?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<BrowserTypeLaunchOptions, ChromiumBrowserIdentity?, CancellationToken>((options, identity, _) =>
+            {
+                launchOptions = options;
+                browserIdentity = identity;
+            })
             .ReturnsAsync(browser.Object);
 
         browser
@@ -75,6 +83,11 @@ public class BrowserContextFactoryTests
             "--disable-features=IsolateOrigins",
             "--disable-site-isolation-trials"
         });
+        browserIdentity.Should().NotBeNull();
+        browserIdentity!.Locale.Should().Be("ru-RU");
+        browserIdentity.Timezone.Should().Be("Europe/Moscow");
+        browserIdentity.Platform.Should().Be("windows");
+        browserIdentity.ProxyUrl.Should().BeNull();
         contextOptions.Should().NotBeNull();
         contextOptions!.UserAgent.Should().Be(profile.UserAgent);
         contextOptions.Locale.Should().Be("ru-RU");

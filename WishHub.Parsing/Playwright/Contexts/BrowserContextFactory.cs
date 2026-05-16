@@ -43,7 +43,7 @@ public sealed class BrowserContextFactory : IBrowserContextFactory
             profile.Platform,
             !string.IsNullOrWhiteSpace(proxyUrl));
 
-        var browser = await _browserLauncher.LaunchAsync(CreateLaunchOptions(proxyUrl), ct);
+        var browser = await _browserLauncher.LaunchAsync(CreateLaunchOptions(proxyUrl), CreateIdentity(profile, proxyUrl), ct);
 
         var contextOptions = new BrowserNewContextOptions
         {
@@ -91,5 +91,26 @@ public sealed class BrowserContextFactory : IBrowserContextFactory
         }
 
         return options;
+    }
+
+    private static ChromiumBrowserIdentity CreateIdentity(FingerprintProfile profile, string? proxyUrl)
+    {
+        return new ChromiumBrowserIdentity(
+            FingerprintSeed: $"{profile.UserAgent}|{profile.Platform}|{profile.WebGLVendor}|{profile.WebGLRenderer}|{proxyUrl}",
+            Timezone: profile.Timezone,
+            Locale: profile.Locale,
+            Platform: profile.Platform switch
+            {
+                "Win32" => "windows",
+                "MacIntel" => "macos",
+                _ => profile.Platform
+            },
+            WebGlVendor: profile.WebGLVendor,
+            WebGlRenderer: profile.WebGLRenderer,
+            HardwareConcurrency: profile.HardwareConcurrency,
+            DeviceMemory: profile.DeviceMemory,
+            ScreenWidth: profile.ScreenWidth,
+            ScreenHeight: profile.ScreenHeight,
+            ProxyUrl: proxyUrl);
     }
 }
