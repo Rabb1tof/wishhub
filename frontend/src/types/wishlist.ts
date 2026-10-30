@@ -1,33 +1,26 @@
-export interface Product {
-  id: string
-  name: string
-  price: number
-  currency: string
-  imageProxyUrl?: string
-  source: string
-  url: string
-}
-
 export interface WishlistItem {
   id: string
-  product: Product
-  customName?: string
+  url: string
+  name: string
+  imageUrl: string | null
+  price: number | null
+  currency: string
+  source: string
   sortOrder: number
   createdAt: string
   isReserved: boolean
-  reservedById?: string
-  reservedByUsername?: string
-  reservedByDisplayName?: string
-  isProcessing?: boolean
-  processingError?: string
+  isReservedByMe: boolean
+  reservedBy: { id: string; username: string; displayName: string; avatarUrl?: string } | null
 }
 
 export interface AddWishlistItemRequest {
   url: string
-  customName?: string
+  name: string
+  imageUrl?: string | null
+  price?: number | null
+  currency?: string
 }
 
-export interface UpdateWishlistItemRequest {
-  customName?: string
+export interface UpdateWishlistItemRequest extends AddWishlistItemRequest {
   sortOrder?: number
 }
