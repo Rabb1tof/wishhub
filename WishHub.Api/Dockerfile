@@ -15,11 +15,11 @@ COPY WishHub.Parsing/ WishHub.Parsing/
 COPY WishHub.Api/ WishHub.Api/
 RUN dotnet publish WishHub.Api/WishHub.Api.csproj -c Release -o /app --no-restore /p:UseAppHost=false
 
-FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:9.0.22-alpine3.24-composite-extra AS runtime
 WORKDIR /app
-ENV DOTNET_RUNNING_IN_CONTAINER=true ASPNETCORE_URLS=http://+:5000
+ENV DOTNET_RUNNING_IN_CONTAINER=true ASPNETCORE_URLS=http://+:5000 DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
 # Used by the existing Compose HTTP health check.
-RUN apt-get update && apt-get install -y --no-install-recommends wget && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache wget
 COPY --from=build /app .
 EXPOSE 5000
 ENTRYPOINT ["dotnet", "WishHub.Api.dll"]

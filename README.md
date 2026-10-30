@@ -11,11 +11,11 @@
 - Яндекс Маркет и неизвестные магазины: ручное заполнение. Поисковый API с бесплатной квотой остаётся дополнительной задачей, не условием сохранения.
 - Недоступная картинка показывает заглушку. Картинки загружает браузер пользователя напрямую с указанного URL, с `no-referrer`.
 
-В runtime нет Chromium/Playwright, browser sidecar, Hangfire и Redis. Приложение использует ASP.NET Core/EF Core, PostgreSQL, React/Vite/TypeScript и SignalR. Аватары сохраняются в существующем volume.
+API-образ использует Alpine composite-extra с полноценными ICU и часовыми поясами. В runtime нет Chromium/Playwright, browser sidecar, Hangfire и Redis. Приложение использует ASP.NET Core/EF Core, PostgreSQL, React/Vite/TypeScript и SignalR. Аватары сохраняются в существующем volume.
 
 ## Локальная разработка
 
-Требуются .NET 9 SDK, Node.js, PostgreSQL 16 либо Docker Desktop.
+Требуются .NET 9 SDK, Node.js 24, PostgreSQL 16 либо Docker Desktop.
 
 ```sh
 cp .env.example .env
