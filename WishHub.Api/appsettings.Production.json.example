@@ -1,7 +1,6 @@
 {
   "ConnectionStrings": {
-    "Default": "Host=postgres;Database=wishlist;Username=wishlist;Password=CHANGE_IN_ENV",
-    "Redis": "redis:6379"
+    "Default": "Host=postgres;Database=wishlist;Username=wishlist;Password=CHANGE_IN_ENV"
   },
   "Jwt": {
     "Secret": "CHANGE_IN_ENV_OR_USE_ENVIRONMENT_VARIABLE",
@@ -9,9 +8,6 @@
     "Audience": "WishHubUsers",
     "AccessTokenExpiryMinutes": 60,
     "RefreshTokenExpiryDays": 30
-  },
-  "Hangfire": {
-    "PriceUpdateIntervalHours": 8
   },
   "Frontend": {
     "Url": "https://your_domain.com"
@@ -27,25 +23,14 @@
       "BotUsername": "your_bot_username"
     }
   },
-  "ImageProxy": {
-    "AllowedDomains": [
-      "images.wbstatic.net",
-      "basket-01.wb.ru",
-      "basket-02.wb.ru",
-      "cdn1.ozon.ru",
-      "cdn2.ozon.ru",
-      "ir.ozone.ru",
-      "avatars.mds.yandex.net",
-      "market.cdn.yandex.net"
-    ],
-    "CacheTtlHours": 48,
-    "RequestTimeoutSeconds": 10
-  },
   "Logging": {
     "LogLevel": {
       "Default": "Information",
       "Microsoft.AspNetCore": "Warning"
     }
   },
-  "AllowedHosts": "*"
+  "AllowedHosts": "*",
+  "Metadata": {
+    "EnableOzonWbray": false
+  }
 }

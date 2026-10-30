@@ -1,27 +1,16 @@
-# =============================================
-# Development Docker Compose
-# Loads all env vars from .env file
-# =============================================
-
+# Local development: PostgreSQL only. Configure .env from .env.example.
 services:
   postgres:
     image: postgres:16-alpine
-    # Load all env vars from .env file
     env_file:
-      - .env
+    - .env
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-wishlist}
       POSTGRES_USER: ${POSTGRES_USER:-wishlist}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wishlist}
     ports:
-      - "5432:5432"
+    - 5432:5432
     volumes:
-      - pgdata:/var/lib/postgresql/data
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-
+    - pgdata:/var/lib/postgresql/data
 volumes:
-  pgdata:
+  pgdata: null
