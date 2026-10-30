@@ -1,3 +1,4 @@
+import { formatItemSource } from '@/utils/wishlist'
 import { Link } from 'react-router-dom'
 import { Layout } from '@/components/Layout'
 import { UserAvatar } from '@/components/UserAvatar'
@@ -85,6 +86,7 @@ function FriendWishlist({ userId, user }: { userId: string; user: { username: st
               <p className="text-sm text-gray-600">
                 {item.price === null ? 'Цена не указана' : `${item.price} ${item.currency}`}
               </p>
+              <p className="text-xs text-gray-500 truncate">{formatItemSource(item.source, item.url)}</p>
             </div>
           </Link>
         ))}

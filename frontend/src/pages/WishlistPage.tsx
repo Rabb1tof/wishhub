@@ -1,3 +1,4 @@
+import { formatItemSource } from '@/utils/wishlist'
 import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { Layout } from '@/components/Layout'
@@ -66,7 +67,7 @@ function WishlistItemCard({ item, isOwner, onEdit }: { item: WishlistItem; isOwn
         <div className="p-4">
           <h3 className="font-semibold break-words">{item.name}</h3>
           <p className="text-gray-600">{item.price == null ? 'Цена не указана' : `${item.price} ${item.currency}`}</p>
-          <p className="text-sm text-gray-500">{item.source === 'YandexMarket' ? 'Яндекс Маркет' : item.source}</p>
+          <p className="text-sm text-gray-500 break-all">{formatItemSource(item.source, item.url)}</p>
         </div>
       </a>
       {isOwner ? (
