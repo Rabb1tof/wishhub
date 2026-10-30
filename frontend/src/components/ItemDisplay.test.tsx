@@ -1,3 +1,4 @@
+import { formatItemSource } from '@/utils/wishlist'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -9,6 +10,7 @@ import { useAuthStore } from '@/store/auth'
 import type { WishlistItem } from '@/types/wishlist'
 import { ProfilePage } from '@/pages/ProfilePage'
 import { FeedPage } from '@/pages/FeedPage'
+import { WishlistPage } from '@/pages/WishlistPage'
 import { ItemImage } from './ItemImage'
 import { ItemReservation } from './ItemReservation'
 
@@ -184,4 +186,33 @@ describe('Wishlist card pages', () => {
     expect(screen.getByRole('img', { name: 'Zero gift' }).getAttribute('src')).toBe(item.imageUrl)
     expect(adapter.mock.calls.map(([config]) => config.url).sort()).toEqual(['/friends', '/messages/unread/count', '/wishlist/user/owner'])
   })
+})
+
+it.each([
+  { page: 'wishlist', path: '/wishlist', element: <WishlistPage /> },
+  { page: 'profile', path: '/profile/owner', element: <ProfilePage /> },
+  { page: 'feed', path: '/', element: <FeedPage /> },
+])('shows the unknown shop domain instead of an internal source on the $page page', async ({ path, element }) => {
+  const manualItem = { ...item, name: 'Handmade gift', source: 'Unknown', url: 'https://Small-Shop.example/gift?variant=green' }
+  const adapter = mockApi({
+    'get /users/owner': { ...owner, createdAt: item.createdAt, wishlistPrivacy: 'public', friendshipStatus: null, wishlistItemCount: 1 },
+    'get /friends': [{ id: 'friendship', user: owner, status: 'accepted', createdAt: item.createdAt }],
+    'get /wishlist': [manualItem],
+    'get /wishlist/user/owner': [manualItem],
+    'get /messages/unread/count': 0,
+  })
+  mount(<Routes><Route path={path === '/profile/owner' ? '/profile/:username' : path} element={element} /></Routes>, path)
+  expect((await screen.findByText('small-shop.example')).textContent).toBe('small-shop.example')
+  expect(screen.queryByText('Unknown')).toBeNull()
+  expect(screen.getByText('Handmade gift').closest('a')?.getAttribute('href')).toBe(path === '/' ? '/wishlist/owner' : 'https://Small-Shop.example/gift?variant=green')
+  expect(adapter.mock.calls.some(([config]) => config.url?.includes('metadata'))).toBe(false)
+})
+
+it('formats known marketplaces and falls back safely for invalid unknown URLs', () => {
+  expect(formatItemSource('Ozon', 'not a URL')).toBe('Ozon')
+  expect(formatItemSource('Wildberries', 'not a URL')).toBe('Wildberries')
+  expect(formatItemSource('YandexMarket', 'https://market.yandex.ru/product/1')).toBe('Яндекс Маркет')
+  expect(formatItemSource('Unknown', 'not a URL')).toBe('Другой магазин')
+  expect(formatItemSource('Unknown', 'javascript:alert(1)')).toBe('Другой магазин')
+  expect(formatItemSource('Unknown', 'https://user:password@Small-Shop.example:8443/gift?variant=green')).toBe('small-shop.example')
 })

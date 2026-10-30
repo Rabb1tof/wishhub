@@ -1,3 +1,4 @@
+import { formatItemSource } from '@/utils/wishlist'
 import { useParams, Link } from 'react-router-dom'
 import { Layout } from '@/components/Layout'
 import { UserAvatar } from '@/components/UserAvatar'
@@ -137,8 +138,6 @@ export function ProfilePage() {
 }
 
 function PublicWishlistItem({ item, isOwner }: { item: WishlistItem; isOwner: boolean }) {
-  const sourceName = item.source === 'YandexMarket' ? 'Яндекс Маркет' : item.source
-
   return (
     <article className="bg-white rounded-lg shadow overflow-hidden hover:shadow-lg transition-shadow">
       <a href={item.url} target="_blank" rel="noopener noreferrer" className="block">
@@ -148,7 +147,7 @@ function PublicWishlistItem({ item, isOwner }: { item: WishlistItem; isOwner: bo
           <p className="text-gray-600">
             {item.price === null ? 'Цена не указана' : `${item.price} ${item.currency}`}
           </p>
-          <p className="text-sm text-gray-500">{sourceName}</p>
+          <p className="text-sm text-gray-500 break-all">{formatItemSource(item.source, item.url)}</p>
         </div>
       </a>
       {!isOwner && (
