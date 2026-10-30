@@ -1,5 +1,7 @@
+using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Http;
 using System.Security.Claims;
 using WishHub.Core.DTOs.Wishlist;
 using WishHub.Core.Interfaces;
@@ -9,120 +11,87 @@ namespace WishHub.Api.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
-public class WishlistController : ControllerBase
+public class WishlistController(IWishlistService wishlistService) : ControllerBase
 {
-    private readonly IWishlistService _wishlistService;
-    private readonly ILogger<WishlistController> _logger;
-
-    public WishlistController(IWishlistService wishlistService, ILogger<WishlistController> logger)
-    {
-        _wishlistService = wishlistService;
-        _logger = logger;
-    }
-
-    private Guid GetCurrentUserId()
-    {
-        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        return Guid.Parse(userIdClaim!);
-    }
+    private Guid GetCurrentUserId() => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
     [HttpGet]
-    public async Task<ActionResult<IReadOnlyList<WishlistItemDto>>> GetMyWishlist()
+    public async Task<ActionResult<IReadOnlyList<WishlistItemDto>>> GetMyWishlist(CancellationToken ct)
     {
         var userId = GetCurrentUserId();
-        var items = await _wishlistService.GetItemsAsync(userId, userId);
-        return Ok(items);
+        return Ok(await wishlistService.GetItemsAsync(userId, userId, ct));
     }
 
     [HttpGet("user/{userId:guid}")]
-    public async Task<ActionResult<IReadOnlyList<WishlistItemDto>>> GetUserWishlist(Guid userId)
+    public async Task<ActionResult<IReadOnlyList<WishlistItemDto>>> GetUserWishlist(Guid userId, CancellationToken ct)
     {
-        var currentUserId = GetCurrentUserId();
-
-        // Проверяем доступ с учётом приватности
-        var hasAccess = await _wishlistService.CanViewWishlistAsync(userId, currentUserId, HttpContext.RequestAborted);
-        if (!hasAccess)
+        var viewerId = GetCurrentUserId();
+        if (!await wishlistService.CanViewWishlistAsync(userId, viewerId, ct))
             return StatusCode(403, new { error = "Wishlist is private" });
-
-        var items = await _wishlistService.GetItemsAsync(userId, currentUserId);
-        return Ok(items);
+        return Ok(await wishlistService.GetItemsAsync(userId, viewerId, ct));
     }
 
     [HttpPost]
-    public async Task<ActionResult<WishlistItemDto>> AddItem(AddWishlistItemRequest request)
+    [ProducesResponseType<WishlistItemDto>(StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<WishlistItemDto>> AddItem(AddWishlistItemRequest request, CancellationToken ct)
     {
         try
         {
-            var userId = GetCurrentUserId();
-            var item = await _wishlistService.AddItemAsync(userId, request);
+            var item = await wishlistService.AddItemAsync(GetCurrentUserId(), request, ct);
             return CreatedAtAction(nameof(GetMyWishlist), new { id = item.Id }, item);
+        }
+        catch (ValidationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
         }
         catch (InvalidOperationException ex)
         {
-            _logger.LogError(ex, "Failed to add wishlist item for URL: {Url}", request.Url);
             return Conflict(new { error = ex.Message });
         }
     }
 
     [HttpPut("{id:guid}")]
-    public async Task<ActionResult<WishlistItemDto>> UpdateItem(Guid id, UpdateWishlistItemRequest request)
+    [ProducesResponseType<WishlistItemDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<WishlistItemDto>> UpdateItem(Guid id, UpdateWishlistItemRequest request, CancellationToken ct)
     {
-        var userId = GetCurrentUserId();
-        var item = await _wishlistService.UpdateItemAsync(userId, id, request);
-
-        if (item == null)
-            return NotFound();
-
-        return Ok(item);
+        try
+        {
+            var item = await wishlistService.UpdateItemAsync(GetCurrentUserId(), id, request, ct);
+            return item == null ? NotFound() : Ok(item);
+        }
+        catch (ValidationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { error = ex.Message });
+        }
     }
 
     [HttpDelete("{id:guid}")]
-    public async Task<IActionResult> DeleteItem(Guid id)
+    public async Task<IActionResult> DeleteItem(Guid id, CancellationToken ct)
     {
-        var userId = GetCurrentUserId();
-        await _wishlistService.DeleteItemAsync(userId, id);
+        await wishlistService.DeleteItemAsync(GetCurrentUserId(), id, ct);
         return NoContent();
     }
 
     [HttpPost("{id:guid}/reserve")]
-    public async Task<ActionResult<WishlistItemDto>> ReserveItem(Guid id)
+    public async Task<ActionResult<WishlistItemDto>> ReserveItem(Guid id, CancellationToken ct)
     {
-        var userId = GetCurrentUserId();
-        var item = await _wishlistService.ReserveItemAsync(id, userId);
-
-        if (item == null)
-            return BadRequest(new { error = "Cannot reserve this item" });
-
-        return Ok(item);
-    }
-
-    [HttpPost("{id:guid}/refresh")]
-    public async Task<ActionResult<WishlistItemDto>> RefreshItem(Guid id)
-    {
-        var userId = GetCurrentUserId();
-        try
-        {
-            var item = await _wishlistService.RefreshItemAsync(id, userId);
-            if (item == null)
-                return NotFound();
-            return Ok(item);
-        }
-        catch (InvalidOperationException ex)
-        {
-            _logger.LogWarning(ex, "Failed to refresh wishlist item {ItemId}", id);
-            return BadRequest(new { error = ex.Message });
-        }
+        var item = await wishlistService.ReserveItemAsync(id, GetCurrentUserId(), ct);
+        return item == null ? BadRequest(new { error = "Cannot reserve this item" }) : Ok(item);
     }
 
     [HttpPost("{id:guid}/cancel-reservation")]
-    public async Task<ActionResult<WishlistItemDto>> CancelReservation(Guid id)
+    public async Task<ActionResult<WishlistItemDto>> CancelReservation(Guid id, CancellationToken ct)
     {
-        var userId = GetCurrentUserId();
-        var item = await _wishlistService.CancelReservationAsync(id, userId);
-
-        if (item == null)
-            return BadRequest(new { error = "Cannot cancel reservation" });
-
-        return Ok(item);
+        var item = await wishlistService.CancelReservationAsync(id, GetCurrentUserId(), ct);
+        return item == null ? BadRequest(new { error = "Cannot cancel reservation" }) : Ok(item);
     }
 }

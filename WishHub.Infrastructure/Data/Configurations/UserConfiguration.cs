@@ -16,5 +16,7 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
         builder.Property(u => u.DisplayName).HasMaxLength(100);
         builder.Property(u => u.Bio).HasMaxLength(500);
         builder.Property(u => u.AvatarUrl).HasMaxLength(500);
+        // Legacy setting remains in storage until the separate cleanup migration.
+        builder.Property<int>("PriceRefreshIntervalHours").HasDefaultValue(24);
     }
 }

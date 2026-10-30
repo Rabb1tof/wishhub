@@ -1,262 +1,192 @@
+using System.ComponentModel.DataAnnotations;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging;
 using WishHub.Core.DTOs.Wishlist;
 using WishHub.Core.Entities;
 using WishHub.Core.Interfaces;
+using WishHub.Core.Validation;
 using WishHub.Infrastructure.Data;
 
 namespace WishHub.Infrastructure.Services;
 
-public class WishlistService : IWishlistService
+public class WishlistService(AppDbContext dbContext) : IWishlistService
 {
-    private readonly AppDbContext _dbContext;
-    private readonly IProductService _productService;
-    private readonly ILogger<WishlistService> _logger;
-
-    public WishlistService(AppDbContext dbContext, IProductService productService, ILogger<WishlistService> logger)
-    {
-        _dbContext = dbContext;
-        _productService = productService;
-        _logger = logger;
-    }
-
     public async Task<WishlistItemDto> AddItemAsync(Guid ownerId, AddWishlistItemRequest request, CancellationToken ct = default)
     {
-        // Get or create product from URL
-        var product = await _productService.GetOrCreateFromUrlAsync(request.Url, ct);
-
-        // Check if already exists in wishlist
-        var existing = await _dbContext.WishlistItems
-            .FirstOrDefaultAsync(w => w.OwnerId == ownerId && w.ProductId == product.Id, ct);
-
-        if (existing != null)
-        {
-            throw new InvalidOperationException("Product already exists in wishlist");
-        }
-
-        // Get max sort order
-        var maxOrder = await _dbContext.WishlistItems
-            .Where(w => w.OwnerId == ownerId)
-            .Select(w => (int?)w.SortOrder)
-            .MaxAsync(ct) ?? 0;
-
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(ct);
+        await LockOwnerAsync(ownerId, ct);
         var item = new WishlistItem
         {
             Id = Guid.NewGuid(),
             OwnerId = ownerId,
-            ProductId = product.Id,
-            CustomName = request.CustomName,
-            IsReserved = false,
-            SortOrder = maxOrder + 1,
             CreatedAt = DateTime.UtcNow
         };
+        ApplyValues(item, request);
+        await EnsureUniqueUrlAsync(ownerId, item.Url, null, ct);
 
-        _dbContext.WishlistItems.Add(item);
-        await _dbContext.SaveChangesAsync(ct);
+        var maxOrder = await dbContext.WishlistItems
+            .Where(w => w.OwnerId == ownerId)
+            .Select(w => (int?)w.SortOrder)
+            .MaxAsync(ct) ?? 0;
+        item.SortOrder = maxOrder + 1;
 
-        return await MapToDtoAsync(item, ownerId, ct);
+        dbContext.WishlistItems.Add(item);
+        await dbContext.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+        return MapToDto(item, ownerId);
     }
 
     public async Task<WishlistItemDto?> UpdateItemAsync(Guid ownerId, Guid itemId, UpdateWishlistItemRequest request, CancellationToken ct = default)
     {
-        var item = await _dbContext.WishlistItems
+        var item = await dbContext.WishlistItems
             .FirstOrDefaultAsync(w => w.Id == itemId && w.OwnerId == ownerId, ct);
-
         if (item == null)
             return null;
 
-        if (request.CustomName != null)
-            item.CustomName = request.CustomName;
-
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(ct);
+        await LockOwnerAsync(ownerId, ct);
+        // Validate before touching tracked state, including duplicate conflicts.
+        Validator.ValidateObject(request, new ValidationContext(request), validateAllProperties: true);
+        var url = WishlistValues.NormalizeUrl(request.Url);
+        await EnsureUniqueUrlAsync(ownerId, url, itemId, ct);
+        ApplyValues(item, request);
         if (request.SortOrder.HasValue)
             item.SortOrder = request.SortOrder.Value;
 
-        await _dbContext.SaveChangesAsync(ct);
-
-        return await MapToDtoAsync(item, ownerId, ct);
+        await dbContext.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+        return MapToDto(item, ownerId);
     }
 
     public async Task DeleteItemAsync(Guid ownerId, Guid itemId, CancellationToken ct = default)
     {
-        var item = await _dbContext.WishlistItems
+        var item = await dbContext.WishlistItems
             .FirstOrDefaultAsync(w => w.Id == itemId && w.OwnerId == ownerId, ct);
-
-        if (item != null)
-        {
-            _dbContext.WishlistItems.Remove(item);
-            await _dbContext.SaveChangesAsync(ct);
-        }
+        if (item == null)
+            return;
+        dbContext.WishlistItems.Remove(item);
+        await dbContext.SaveChangesAsync(ct);
     }
 
     public async Task<IReadOnlyList<WishlistItemDto>> GetItemsAsync(Guid ownerId, Guid? viewerId, CancellationToken ct = default)
     {
-        // Проверяем доступ с учётом приватности
         if (!await CanViewWishlistAsync(ownerId, viewerId, ct))
             return Array.Empty<WishlistItemDto>();
-
-        var query = _dbContext.WishlistItems
-            .AsNoTracking()
+        var items = await dbContext.WishlistItems.AsNoTracking()
             .Where(w => w.OwnerId == ownerId)
-            .Include(w => w.Product)
             .Include(w => w.ReservedBy)
-            .OrderBy(w => w.SortOrder)
-            .AsQueryable();
-
-        var items = await query.ToListAsync(ct);
-
+            .OrderBy(w => w.SortOrder).ThenBy(w => w.CreatedAt)
+            .ToListAsync(ct);
         return items.Select(i => MapToDto(i, viewerId)).ToList();
     }
 
     public async Task<bool> CanViewWishlistAsync(Guid ownerId, Guid? viewerId, CancellationToken ct = default)
     {
-        // Владелец всегда видит свой вишлист
-        if (viewerId.HasValue && viewerId.Value == ownerId)
+        if (viewerId == ownerId)
             return true;
-
-        // Проверяем настройки приватности владельца
-        var owner = await _dbContext.Users
-            .AsNoTracking()
-            .Where(u => u.Id == ownerId)
-            .Select(u => new { u.WishlistPrivacy })
+        var owner = await dbContext.Users.AsNoTracking()
+            .Where(u => u.Id == ownerId).Select(u => new { u.WishlistPrivacy })
             .FirstOrDefaultAsync(ct);
-
-        if (owner == null)
+        if (owner == null || owner.WishlistPrivacy == WishlistPrivacy.Private)
             return false;
-
-        if (owner.WishlistPrivacy == WishlistPrivacy.Private)
+        if (owner.WishlistPrivacy != WishlistPrivacy.FriendsOnly)
+            return true;
+        if (!viewerId.HasValue)
             return false;
-
-        if (owner.WishlistPrivacy == WishlistPrivacy.FriendsOnly)
-        {
-            if (!viewerId.HasValue)
-                return false;
-
-            return await _dbContext.Friendships
-                .AsNoTracking()
-                .AnyAsync(f =>
-                    f.Status == FriendshipStatus.Accepted &&
-                    ((f.RequesterId == viewerId.Value && f.AddresseeId == ownerId) ||
-                     (f.AddresseeId == viewerId.Value && f.RequesterId == ownerId)), ct);
-        }
-
-        // Public
-        return true;
+        return await dbContext.Friendships.AsNoTracking().AnyAsync(f =>
+            f.Status == FriendshipStatus.Accepted &&
+            ((f.RequesterId == viewerId.Value && f.AddresseeId == ownerId) ||
+             (f.AddresseeId == viewerId.Value && f.RequesterId == ownerId)), ct);
     }
 
     public async Task<WishlistItemDto?> ReserveItemAsync(Guid itemId, Guid reserverId, CancellationToken ct = default)
     {
-        var item = await _dbContext.WishlistItems
-            .FirstOrDefaultAsync(w => w.Id == itemId, ct);
-
-        if (item == null || item.IsReserved || item.OwnerId == reserverId)
+        var item = await dbContext.WishlistItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == itemId, ct);
+        if (item == null || item.IsReserved || item.OwnerId == reserverId ||
+            !await CanViewWishlistAsync(item.OwnerId, reserverId, ct))
             return null;
 
+        var updated = await dbContext.WishlistItems
+            .Where(w => w.Id == itemId && !w.IsReserved)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(w => w.IsReserved, true)
+                .SetProperty(w => w.ReservedById, reserverId), ct);
+        if (updated == 0)
+            return null;
+
+        // A notification to the owner would reveal the surprise reservation.
         item.IsReserved = true;
         item.ReservedById = reserverId;
-
-        // Create notification for owner
-        var notification = new Notification
-        {
-            Id = Guid.NewGuid(),
-            UserId = item.OwnerId,
-            Type = NotificationType.ItemReserved,
-            Payload = System.Text.Json.JsonSerializer.Serialize(new
-            {
-                ItemId = item.Id,
-                ProductId = item.ProductId,
-                ReservedById = reserverId
-            }),
-            IsRead = false,
-            CreatedAt = DateTime.UtcNow
-        };
-
-        _dbContext.Notifications.Add(notification);
-        await _dbContext.SaveChangesAsync(ct);
-
-        return await MapToDtoAsync(item, reserverId, ct);
-    }
-
-    public async Task<WishlistItemDto?> RefreshItemAsync(Guid itemId, Guid ownerId, CancellationToken ct = default)
-    {
-        var item = await _dbContext.WishlistItems
-            .FirstOrDefaultAsync(w => w.Id == itemId && w.OwnerId == ownerId, ct);
-
-        if (item == null)
-            return null;
-
-        // Принудительно перепарсим товар
-        await _productService.RefreshPriceAsync(item.ProductId, ct);
-
-        return await MapToDtoAsync(item, ownerId, ct);
+        item.ReservedBy = await dbContext.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == reserverId, ct);
+        return MapToDto(item, reserverId);
     }
 
     public async Task<WishlistItemDto?> CancelReservationAsync(Guid itemId, Guid reserverId, CancellationToken ct = default)
     {
-        var item = await _dbContext.WishlistItems
-            .FirstOrDefaultAsync(w => w.Id == itemId && w.ReservedById == reserverId, ct);
-
+        var item = await dbContext.WishlistItems.AsNoTracking()
+            .FirstOrDefaultAsync(w => w.Id == itemId && w.ReservedById == reserverId && w.IsReserved, ct);
         if (item == null)
             return null;
-
+        var updated = await dbContext.WishlistItems
+            .Where(w => w.Id == itemId && w.ReservedById == reserverId && w.IsReserved)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(w => w.IsReserved, false)
+                .SetProperty(w => w.ReservedById, (Guid?)null), ct);
+        if (updated == 0)
+            return null;
         item.IsReserved = false;
         item.ReservedById = null;
-
-        await _dbContext.SaveChangesAsync(ct);
-
-        return await MapToDtoAsync(item, reserverId, ct);
+        return MapToDto(item, reserverId);
     }
 
-    private async Task<WishlistItemDto> MapToDtoAsync(WishlistItem item, Guid? viewerId, CancellationToken ct = default)
+    private async Task LockOwnerAsync(Guid ownerId, CancellationToken ct)
     {
-        await _dbContext.Entry(item).Reference(w => w.Product).LoadAsync(ct);
-        await _dbContext.Entry(item).Reference(w => w.ReservedBy).LoadAsync(ct);
-
-        return MapToDto(item, viewerId);
+        // Legacy duplicate rows must survive migration, so serialize URL checks per owner.
+        if (dbContext.Database.IsNpgsql())
+            await dbContext.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT 1 FROM \"AspNetUsers\" WHERE \"Id\" = {ownerId} FOR UPDATE", ct);
+    }
+    private async Task EnsureUniqueUrlAsync(Guid ownerId, string url, Guid? excludedId, CancellationToken ct)
+    {
+        if (await dbContext.WishlistItems.AnyAsync(w =>
+                w.OwnerId == ownerId && w.Url == url && (!excludedId.HasValue || w.Id != excludedId.Value), ct))
+            throw new InvalidOperationException("URL already exists in wishlist.");
     }
 
-    private WishlistItemDto MapToDto(WishlistItem item, Guid? viewerId)
+    private static void ApplyValues(WishlistItem item, AddWishlistItemRequest request)
     {
-        var imageUrl = item.Product.ImageUrl;
-        var imageProxyUrl = !string.IsNullOrEmpty(imageUrl)
-            ? $"/api/images/proxy?url={Uri.EscapeDataString(imageUrl)}"
-            : null;
+        Validator.ValidateObject(request, new ValidationContext(request), validateAllProperties: true);
+        item.Url = WishlistValues.NormalizeUrl(request.Url);
+        item.Name = WishlistValues.NormalizeName(request.Name);
+        item.ImageUrl = request.ImageUrl is null ? null : WishlistValues.NormalizeUrl(request.ImageUrl);
+        item.Price = request.Price;
+        item.Currency = WishlistValues.NormalizeCurrency(request.Currency);
+        item.Source = WishlistValues.GetSource(item.Url);
+    }
 
-        // Показываем processing если продукт в процессе или ожидании парсинга
-        var isProcessing = item.Product.ParsingStatus == ParsingStatus.Pending ||
-                           item.Product.ParsingStatus == ParsingStatus.Processing;
-
+    private static WishlistItemDto MapToDto(WishlistItem item, Guid? viewerId)
+    {
+        var isOwner = item.OwnerId == viewerId;
+        var reservedByMe = !isOwner && viewerId.HasValue && item.IsReserved && item.ReservedById == viewerId;
         return new WishlistItemDto
         {
             Id = item.Id,
-            CustomName = item.CustomName,
-            IsReserved = item.IsReserved,
-            IsReservedByMe = item.ReservedById == viewerId,
+            Url = item.Url,
+            Name = item.Name,
+            ImageUrl = item.ImageUrl,
+            Price = item.Price,
+            Currency = item.Currency,
+            Source = item.Source.ToString(),
+            IsReserved = !isOwner && item.IsReserved,
+            IsReservedByMe = reservedByMe,
             SortOrder = item.SortOrder,
             CreatedAt = item.CreatedAt,
-            IsProcessing = isProcessing,
-            ProcessingError = item.Product.ParsingStatus == ParsingStatus.Failed
-                ? item.Product.ParsingError
-                : null,
-            Product = new ProductDto
+            ReservedBy = reservedByMe && item.ReservedBy != null ? new UserDto
             {
-                Id = item.Product.Id,
-                Name = isProcessing ? (item.CustomName ?? "Загрузка...") : item.Product.Name,
-                ImageUrl = item.Product.ImageUrl,
-                ImageProxyUrl = isProcessing ? null : imageProxyUrl,
-                Price = item.Product.Price,
-                Currency = item.Product.Currency,
-                Source = item.Product.Source.ToString(),
-                Url = item.Product.Url
-            },
-            ReservedBy = item.ReservedBy != null && item.ReservedById == viewerId
-                ? new UserDto
-                {
-                    Id = item.ReservedBy.Id,
-                    Username = item.ReservedBy.UserName!,
-                    DisplayName = item.ReservedBy.DisplayName,
-                    AvatarUrl = item.ReservedBy.AvatarUrl
-                }
-                : null
+                Id = item.ReservedBy.Id,
+                Username = item.ReservedBy.UserName!,
+                DisplayName = item.ReservedBy.DisplayName,
+                AvatarUrl = item.ReservedBy.AvatarUrl
+            } : null
         };
     }
 }

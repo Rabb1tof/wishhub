@@ -70,11 +70,6 @@ public class UserService : IUserService
             user.WishlistPrivacy = privacy;
         }
 
-        if (request.PriceRefreshIntervalHours.HasValue)
-        {
-            user.PriceRefreshIntervalHours = Math.Clamp(request.PriceRefreshIntervalHours.Value, 1, 168);
-        }
-
         var result = await _userManager.UpdateAsync(user);
         if (!result.Succeeded)
         {
@@ -204,8 +199,7 @@ public class UserService : IUserService
             CreatedAt = user.CreatedAt,
             WishlistPrivacy = user.WishlistPrivacy.ToString(),
             FriendshipStatus = friendshipStatus,
-            WishlistItemCount = wishlistCount,
-            PriceRefreshIntervalHours = user.PriceRefreshIntervalHours
+            WishlistItemCount = wishlistCount
         };
     }
 }

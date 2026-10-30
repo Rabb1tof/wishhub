@@ -13,5 +13,4 @@ public class UserProfileDto
     public string WishlistPrivacy { get; set; } = "Public";
     public FriendshipStatus? FriendshipStatus { get; set; }
     public int WishlistItemCount { get; set; }
-    public int PriceRefreshIntervalHours { get; set; } = 24;
 }

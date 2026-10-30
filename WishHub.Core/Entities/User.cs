@@ -9,10 +9,6 @@ public class User : IdentityUser<Guid>
     public string? AvatarUrl { get; set; }
     public DateTime CreatedAt { get; set; }
     public WishlistPrivacy WishlistPrivacy { get; set; } = WishlistPrivacy.Public;
-    /// <summary>
-    /// Интервал автообновления цен товаров в часах (мин. 1, макс. 168 = 7 дней)
-    /// </summary>
-    public int PriceRefreshIntervalHours { get; set; } = 24;
 
     public ICollection<WishlistItem> WishlistItems { get; set; } = [];
     public ICollection<UserExternalLogin> ExternalLogins { get; set; } = [];

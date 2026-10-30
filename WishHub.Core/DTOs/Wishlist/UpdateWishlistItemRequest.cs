@@ -1,11 +1,7 @@
-using System.ComponentModel.DataAnnotations;
-
 namespace WishHub.Core.DTOs.Wishlist;
 
-public class UpdateWishlistItemRequest
+/// <summary>Complete replacement of card values; null image and price clear them.</summary>
+public class UpdateWishlistItemRequest : AddWishlistItemRequest
 {
-    [MaxLength(500)]
-    public string? CustomName { get; set; }
-
     public int? SortOrder { get; set; }
 }
