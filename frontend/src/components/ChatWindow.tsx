@@ -9,7 +9,7 @@ interface ChatWindowProps {
 export function ChatWindow({ userId, userName }: ChatWindowProps) {
   const { data: messages, isLoading } = useMessages(userId)
   const sendMessage = useSendMessage()
-  const markDialogAsRead = useMarkDialogAsRead()
+  const { mutate: markDialogAsRead } = useMarkDialogAsRead()
   const [newMessage, setNewMessage] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -19,27 +19,27 @@ export function ChatWindow({ userId, userName }: ChatWindowProps) {
 
   // Помечаем все сообщения в диалоге как прочитанные при открытии
   useEffect(() => {
-    markDialogAsRead.mutateAsync(userId)
-  }, [userId])
+    markDialogAsRead(userId)
+  }, [markDialogAsRead, userId])
 
   // Помечаем новые входящие сообщения как прочитанные, пока диалог открыт
   useEffect(() => {
     if (messages && messages.length > 0) {
       const hasUnread = messages.some((m) => m.senderId === userId && !m.isRead)
       if (hasUnread) {
-        markDialogAsRead.mutateAsync(userId)
+        markDialogAsRead(userId)
       }
     }
-  }, [messages, userId])
+  }, [markDialogAsRead, messages, userId])
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!newMessage.trim()) return
+    if (!newMessage.trim() || sendMessage.isPending) return
 
-    await sendMessage.mutateAsync({ userId, content: newMessage })
-    setNewMessage('')
-    // Помечаем все входящие как прочитанные при отправке ответа
-    markDialogAsRead.mutateAsync(userId)
+    sendMessage.mutate({ userId, content: newMessage }, { onSuccess: () => {
+      setNewMessage('')
+      markDialogAsRead(userId)
+    } })
   }
 
   if (isLoading) {
@@ -76,9 +76,13 @@ export function ChatWindow({ userId, userName }: ChatWindowProps) {
         <div ref={messagesEndRef} />
       </div>
 
+      {sendMessage.isError && <p role="alert" className="text-red-600 px-4">Не удалось отправить сообщение. Попробуйте ещё раз.</p>}
       <form onSubmit={handleSend} className="p-4 border-t flex gap-2">
         <input
           type="text"
+          aria-label="Текст сообщения"
+          maxLength={2000}
+          disabled={sendMessage.isPending}
           value={newMessage}
           onChange={(e) => setNewMessage(e.target.value)}
           placeholder="Написать сообщение..."

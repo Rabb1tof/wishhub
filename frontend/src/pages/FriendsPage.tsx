@@ -1,6 +1,6 @@
 import { Layout } from '@/components/Layout'
 import { UserAvatar } from '@/components/UserAvatar'
-import { useFriends, useFriendRequests, useAcceptRequest, useRejectOrCancelRequest } from '@/api/useFriends'
+import { useFriends, useFriendRequests, useAcceptRequest, useRejectOrCancelRequest, useRemoveFriend } from '@/api/useFriends'
 import type { Friendship, FriendRequest } from '@/types/friends'
 
 export function FriendsPage() {
@@ -79,17 +79,18 @@ function FriendRequestCard({ request, type }: { request: FriendRequest; type: 'i
         </div>
       </div>
 
+      {(acceptRequest.isError || rejectRequest.isError) && <p role="alert">Не удалось изменить заявку. Попробуйте ещё раз.</p>}
       {type === 'incoming' ? (
         <div className="space-x-2">
           <button
-            onClick={() => acceptRequest.mutateAsync(request.id)}
+            onClick={() => acceptRequest.mutate(request.id)}
             disabled={acceptRequest.isPending}
             className="px-3 py-1 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
           >
             Принять
           </button>
           <button
-            onClick={() => rejectRequest.mutateAsync(request.id)}
+            onClick={() => rejectRequest.mutate(request.id)}
             disabled={rejectRequest.isPending}
             className="px-3 py-1 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50"
           >
@@ -98,7 +99,7 @@ function FriendRequestCard({ request, type }: { request: FriendRequest; type: 'i
         </div>
       ) : (
         <button
-          onClick={() => rejectRequest.mutateAsync(request.id)}
+          onClick={() => rejectRequest.mutate(request.id)}
           disabled={rejectRequest.isPending}
           className="px-3 py-1 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400 disabled:opacity-50"
         >
@@ -110,7 +111,7 @@ function FriendRequestCard({ request, type }: { request: FriendRequest; type: 'i
 }
 
 function FriendCard({ friend }: { friend: Friendship }) {
-  const removeFriend = useRejectOrCancelRequest()
+  const removeFriend = useRemoveFriend()
 
   return (
     <div className="bg-white rounded-lg shadow p-4 flex items-center justify-between">
@@ -122,8 +123,9 @@ function FriendCard({ friend }: { friend: Friendship }) {
         </div>
       </a>
 
+      {removeFriend.isError && <p role="alert">Не удалось удалить друга. Попробуйте ещё раз.</p>}
       <button
-        onClick={() => removeFriend.mutateAsync(friend.id)}
+        onClick={() => removeFriend.mutate(friend.user.id)}
         disabled={removeFriend.isPending}
         className="px-3 py-1 text-red-600 hover:text-red-700 text-sm"
       >

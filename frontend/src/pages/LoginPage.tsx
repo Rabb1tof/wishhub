@@ -11,6 +11,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   invalid_state: 'Сессия OAuth истекла, попробуйте снова',
   user_not_found: 'Пользователь не найден',
   user_create_failed: 'Не удалось создать пользователя',
+  account_link_required: 'Войдите в существующий аккаунт и привяжите VK в настройках',
 }
 
 export function LoginPage() {

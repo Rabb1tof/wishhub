@@ -1,105 +1,121 @@
 import { useEffect } from 'react'
-import { HubConnectionBuilder, HubConnection, LogLevel } from '@microsoft/signalr'
+import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr'
+import type { HubConnection } from '@microsoft/signalr'
 import { useQueryClient } from '@tanstack/react-query'
+import type { QueryClient } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'
+import type { NavigateFunction } from 'react-router-dom'
 import { useAuthStore } from '@/store/auth'
 import { useNotificationStore } from '@/store/notifications'
 import { showBrowserNotification } from '@/utils/notifications'
 import type { Message } from '@/types/messages'
+import type { Notification } from '@/types/notifications'
 
-// Module-level singleton — одно соединение на всё приложение
-let connection: HubConnection | null = null
-let connectingPromise: Promise<void> | null = null
-
-async function ensureConnection(
-  accessToken: string,
-  queryClient: ReturnType<typeof useQueryClient>,
-  addNotification: (n: any) => void,
-) {
-  if (connection?.state === 'Connected') return
-  if (connectingPromise) { await connectingPromise; return }
-
-  connectingPromise = (async () => {
-    try {
-      if (connection) {
-        await connection.stop()
-        connection = null
-      }
-
-      const conn = new HubConnectionBuilder()
-        .withUrl(`/hubs/chat?access_token=${accessToken}`, {
-          transport: 1 | 2 | 4,
-        })
-        .withAutomaticReconnect()
-        .configureLogging(LogLevel.Warning)
-        .build()
-
-      conn.on('ReceiveMessage', (message: Message) => {
-        queryClient.invalidateQueries({ queryKey: ['messages'] })
-        queryClient.invalidateQueries({ queryKey: ['dialogs'] })
-        queryClient.invalidateQueries({ queryKey: ['messages', 'unread'] })
-
-        showBrowserNotification(
-          'Новое сообщение',
-          message.content,
-          () => { window.location.hash = `/messages?user=${message.senderId}` }
-        )
-      })
-
-      conn.on('MessageSent', () => {
-        queryClient.invalidateQueries({ queryKey: ['messages'] })
-        queryClient.invalidateQueries({ queryKey: ['dialogs'] })
-      })
-
-      conn.on('MessageRead', () => {
-        queryClient.invalidateQueries({ queryKey: ['messages'] })
-        queryClient.invalidateQueries({ queryKey: ['dialogs'] })
-        queryClient.invalidateQueries({ queryKey: ['messages', 'unread'] })
-      })
-
-      conn.on('ReceiveNotification', (notification: any) => {
-        addNotification(notification)
-        queryClient.invalidateQueries({ queryKey: ['messages', 'unread'] })
-
-        if (notification.type === 'friend_request') {
-          showBrowserNotification('Запрос в друзья', 'Новый запрос в друзья')
-        } else if (notification.type === 'friend_accepted') {
-          showBrowserNotification('Заявка принята', 'Ваша заявка в друзья принята')
-        } else if (notification.type === 'item_reserved') {
-          showBrowserNotification('Подарок зарезервирован', 'Кто-то зарезервировал подарок из вашего вишлиста')
-        }
-      })
-
-      await conn.start()
-      connection = conn
-    } catch (error) {
-      console.error('[SignalR] Connection failed:', error)
-    } finally {
-      connectingPromise = null
-    }
-  })()
-
-  await connectingPromise
+interface SessionConnection {
+  hub: HubConnection
+  userId: string
+  sessionVersion: number
 }
 
-async function stopConnection() {
-  if (connection) {
-    await connection.stop()
-    connection = null
+// One connection across route changes, owned by one login session.
+let connection: SessionConnection | null = null
+let context: { queryClient: QueryClient; navigate: NavigateFunction } | null = null
+
+function isCurrent(session: SessionConnection): boolean {
+  const auth = useAuthStore.getState()
+  return connection === session && auth.user?.id === session.userId
+    && auth.sessionVersion === session.sessionVersion && !!auth.accessToken
+}
+
+async function stopHub(hub: HubConnection): Promise<void> {
+  try {
+    await hub.stop()
+  } catch (error) {
+    console.error('[SignalR] Stop failed:', error)
   }
 }
 
-export function useSignalR() {
-  const accessToken = useAuthStore((s) => s.accessToken)
-  const addNotification = useNotificationStore((s) => s.addNotification)
-  const queryClient = useQueryClient()
-
-  useEffect(() => {
-    if (!accessToken) return
-    ensureConnection(accessToken, queryClient, addNotification)
-  }, [accessToken, queryClient, addNotification])
-
-  // Не отключаем при размонтировании — singleton живёт пока приложение открыто
-  // Отключение только при logout (через stopConnection)
+export async function stopConnection(): Promise<void> {
+  const previous = connection
+  connection = null
+  if (previous) await stopHub(previous.hub)
 }
 
-export { stopConnection }
+function ensureConnection(): void {
+  if (connection && isCurrent(connection)) return
+  void stopConnection()
+  const { user, accessToken, sessionVersion } = useAuthStore.getState()
+  if (!context || !user || !accessToken) return
+
+  const hub = new HubConnectionBuilder()
+    .withUrl('/hubs/chat', {
+      accessTokenFactory: () => isCurrent(session) ? useAuthStore.getState().accessToken ?? '' : '',
+      transport: 1 | 2 | 4,
+    })
+    .withAutomaticReconnect()
+    .configureLogging(LogLevel.Warning)
+    .build()
+  const session: SessionConnection = { hub, userId: user.id, sessionVersion }
+  // Publish before start so logout also owns and stops a pending handshake.
+  connection = session
+
+  const invalidateMessages = () => {
+    if (!isCurrent(session)) return
+    void context?.queryClient.invalidateQueries({ queryKey: ['messages'] })
+    void context?.queryClient.invalidateQueries({ queryKey: ['dialogs'] })
+  }
+
+  hub.on('ReceiveMessage', (message: Message) => {
+    if (!isCurrent(session)) return
+    invalidateMessages()
+    showBrowserNotification('Новое сообщение', message.content, () => {
+      if (isCurrent(session)) void context?.navigate(`/messages?user=${encodeURIComponent(message.senderId)}`)
+    })
+  })
+  hub.on('MessageSent', invalidateMessages)
+  hub.on('MessageRead', invalidateMessages)
+  hub.on('ReceiveNotification', (notification: Notification) => {
+    if (!isCurrent(session)) return
+    useNotificationStore.getState().addNotification(notification)
+    void context?.queryClient.invalidateQueries({ queryKey: ['messages', 'unread'] })
+    if (notification.type === 'friend_request') {
+      showBrowserNotification('Запрос в друзья', 'Новый запрос в друзья')
+    } else if (notification.type === 'friend_accepted') {
+      showBrowserNotification('Заявка принята', 'Ваша заявка в друзья принята')
+    }
+  })
+  hub.onclose(() => {
+    if (connection === session) connection = null
+  })
+
+  void hub.start().then(async () => {
+    // A cancelled start may settle after a new session has already connected.
+    if (!isCurrent(session)) await stopHub(hub)
+  }).catch((error: unknown) => {
+    if (!isCurrent(session)) return
+    connection = null
+    console.error('[SignalR] Connection failed:', error)
+  })
+}
+
+// Logout and account changes must stop delivery even while Layout is unmounted.
+const unsubscribeAuth = useAuthStore.subscribe((auth, previous) => {
+  if (auth.sessionVersion !== previous.sessionVersion || auth.user?.id !== previous.user?.id
+    || auth.accessToken !== previous.accessToken) ensureConnection()
+})
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    unsubscribeAuth()
+    void stopConnection()
+  })
+}
+
+export function useSignalR() {
+  const queryClient = useQueryClient()
+  const navigate = useNavigate()
+  useEffect(() => {
+    context = { queryClient, navigate }
+    ensureConnection()
+  }, [queryClient, navigate])
+}

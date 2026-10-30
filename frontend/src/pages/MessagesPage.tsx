@@ -1,17 +1,18 @@
-import { useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Layout } from '@/components/Layout'
 import { UserAvatar } from '@/components/UserAvatar'
 import { useDialogs } from '@/api/useMessages'
+import { useFriends } from '@/api/useFriends'
 import { ChatWindow } from '@/components/ChatWindow'
 
 export function MessagesPage() {
-  const [searchParams] = useSearchParams()
-  const initialUserId = searchParams.get('user')
-  const [selectedUserId, setSelectedUserId] = useState<string | null>(initialUserId)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const selectedUserId = searchParams.get('user')
   const { data: dialogs, isLoading: dialogsLoading } = useDialogs()
 
-  const selectedDialog = dialogs?.find((d) => d.user.id === selectedUserId)
+  const { data: friends } = useFriends()
+  const selectedUser = dialogs?.find((d) => d.user.id === selectedUserId)?.user
+    ?? friends?.find((friend) => friend.user.id === selectedUserId)?.user
 
   return (
     <Layout>
@@ -29,7 +30,7 @@ export function MessagesPage() {
                 {dialogs?.map((dialog) => (
                   <button
                     key={dialog.user.id}
-                    onClick={() => setSelectedUserId(dialog.user.id)}
+                    onClick={() => setSearchParams({ user: dialog.user.id })}
                     className={`w-full p-4 text-left hover:bg-gray-50 border-b ${
                       selectedUserId === dialog.user.id ? 'bg-blue-50' : ''
                     }`}
@@ -60,8 +61,8 @@ export function MessagesPage() {
 
           {/* Chat Window */}
           <div className="w-2/3 flex flex-col">
-            {selectedUserId && selectedDialog ? (
-              <ChatWindow userId={selectedUserId} userName={selectedDialog.user.displayName} />
+            {selectedUserId && selectedUser ? (
+              <ChatWindow key={selectedUserId} userId={selectedUserId} userName={selectedUser.displayName} />
             ) : (
               <div className="flex-1 flex items-center justify-center text-gray-500">
                 Выберите диалог

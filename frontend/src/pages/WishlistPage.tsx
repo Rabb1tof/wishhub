@@ -19,7 +19,7 @@ export function WishlistPage() {
   const loading = isLoading || profileLoading
 
   return (
-    <Layout>
+    <Layout requireAuth={!username}>
       <section className="wh-wishlist">
         <header className="wh-wishlist-heading">
           {isOwnWishlist ? (
