@@ -27,6 +27,7 @@ public class Program
         builder.Services.AddScoped<INotificationService, NotificationService>();
 
         builder.Services.AddProductMetadata(builder.Configuration);
+        builder.Services.AddWishlistImages(builder.Configuration, builder.Environment);
 
         // Add SignalR
         builder.Services.AddSingleton<Microsoft.AspNetCore.SignalR.IUserIdProvider, ChatUserIdProvider>();

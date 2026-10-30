@@ -6,6 +6,7 @@ using WishHub.Core.DTOs.Wishlist;
 using WishHub.Core.Entities;
 using WishHub.Infrastructure.Data;
 using WishHub.Infrastructure.Services;
+using WishHub.Infrastructure.Storage;
 
 namespace WishHub.Tests.Infrastructure;
 
@@ -23,6 +24,8 @@ public sealed class WishlistPostgresConcurrencyTests
         await using (var create = new NpgsqlCommand($"CREATE SCHEMA \"{schema}\"", admin))
             await create.ExecuteNonQueryAsync();
 
+        var imageRoot = Path.Combine(Path.GetTempPath(), "wishhub-pg-images-" + Guid.NewGuid().ToString("N"));
+        var images = new WishlistImageStorage(imageRoot);
         var scopedConnection = new NpgsqlConnectionStringBuilder(connectionString) { SearchPath = schema }.ConnectionString;
         AppDbContext Context(IInterceptor? interceptor = null)
         {
@@ -44,7 +47,7 @@ public sealed class WishlistPostgresConcurrencyTests
             };
             setup.Users.Add(owner);
             await setup.SaveChangesAsync();
-            var original = await new WishlistService(setup).AddItemAsync(owner.Id, new()
+            var original = await new WishlistService(setup, images).AddItemAsync(owner.Id, new()
             {
                 Url = "https://shop.example/original?sku=1", Name = "Original",
                 ImageUrl = "https://cdn.example/original.jpg", Price = 10m, Currency = "RUB"
@@ -55,7 +58,7 @@ public sealed class WishlistPostgresConcurrencyTests
             var secondGate = new OwnerLockGate(holdAcquiredLock: false);
             await using var first = Context(firstGate);
             await using var second = Context(secondGate);
-            var firstWrite = new WishlistService(first).UpdateItemAsync(owner.Id, original.Id, new()
+            var firstWrite = new WishlistService(first, images).UpdateItemAsync(owner.Id, original.Id, new()
             {
                 Url = "https://www.ozon.ru/product/changed?sku=2", Name = "First",
                 ImageUrl = "https://cdn.example/first.jpg", Price = 25m, Currency = "USD", SortOrder = 44
@@ -64,7 +67,7 @@ public sealed class WishlistPostgresConcurrencyTests
             try
             {
                 await firstGate.Acquired.Task.WaitAsync(timeout.Token);
-                var secondWrite = new WishlistService(second).UpdateItemAsync(owner.Id, original.Id, new()
+                var secondWrite = new WishlistService(second, images).UpdateItemAsync(owner.Id, original.Id, new()
                 {
                     Url = original.Url, Name = "Second",
                     ImageUrl = original.ImageUrl, Price = original.Price, Currency = original.Currency
@@ -102,9 +105,88 @@ public sealed class WishlistPostgresConcurrencyTests
         {
             await using var drop = new NpgsqlCommand($"DROP SCHEMA \"{schema}\" CASCADE", admin);
             await drop.ExecuteNonQueryAsync();
+            Directory.Delete(imageRoot, recursive: true);
         }
     }
 
+
+    [PostgresFact]
+    public async Task SaveAndUpload_ConcurrentOrphanCleanup_KeepsFileReferencedWhileHoldingOwnerLock()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("WISHHUB_TEST_POSTGRES")!;
+        var schema = "wishlist_image_race_" + Guid.NewGuid().ToString("N");
+        var imageRoot = Path.Combine(Path.GetTempPath(), "wishhub-pg-image-race-" + Guid.NewGuid().ToString("N"));
+        var images = new WishlistImageStorage(imageRoot);
+        await using var admin = new NpgsqlConnection(connectionString);
+        await admin.OpenAsync();
+        await using (var create = new NpgsqlCommand($"CREATE SCHEMA \"{schema}\"", admin))
+            await create.ExecuteNonQueryAsync();
+        var scopedConnection = new NpgsqlConnectionStringBuilder(connectionString) { SearchPath = schema }.ConnectionString;
+        AppDbContext Context(IInterceptor? interceptor = null)
+        {
+            var options = new DbContextOptionsBuilder<AppDbContext>()
+                .UseNpgsql(scopedConnection, pg => pg.MigrationsHistoryTable("__EFMigrationsHistory", schema));
+            if (interceptor is not null)
+                options.AddInterceptors(interceptor);
+            return new AppDbContext(options.Options);
+        }
+        try
+        {
+            await using var setup = Context();
+            await setup.Database.MigrateAsync();
+            var owner = new User
+            {
+                Id = Guid.NewGuid(), UserName = "owner", Email = "owner@example.test",
+                DisplayName = "Owner", CreatedAt = DateTime.UtcNow
+            };
+            setup.Users.Add(owner);
+            await setup.SaveChangesAsync();
+            var bytes = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a7nwAAAAASUVORK5CYII=");
+            using var originalContent = new MemoryStream(bytes);
+            var originalUrl = await new WishlistImageService(setup, new WishlistService(setup, images), images)
+                .UploadAsync(owner.Id, originalContent, "image/png");
+            Assert.True(WishHub.Core.Validation.ManagedWishlistImage.TryParse(originalUrl, out var original));
+            File.SetLastWriteTimeUtc(Path.Combine(imageRoot, owner.Id.ToString("D"), $"{original.ImageId:D}.png"),
+                DateTime.UtcNow.AddHours(-25));
+
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            var saveGate = new OwnerLockGate(holdAcquiredLock: true);
+            var uploadGate = new OwnerLockGate(holdAcquiredLock: false);
+            await using var saving = Context(saveGate);
+            await using var uploading = Context(uploadGate);
+            var save = new WishlistService(saving, images).AddItemAsync(owner.Id, new()
+            {
+                Url = "https://shop.example/saved-image", Name = "Image must survive", ImageUrl = originalUrl
+            }, timeout.Token);
+            try
+            {
+                await saveGate.Acquired.Task.WaitAsync(timeout.Token);
+                using var uploadedContent = new MemoryStream(bytes);
+                var upload = new WishlistImageService(uploading, new WishlistService(uploading, images), images)
+                    .UploadAsync(owner.Id, uploadedContent, "image/png", timeout.Token);
+                await uploadGate.Attempted.Task.WaitAsync(timeout.Token);
+                saveGate.Release.TrySetResult();
+                await Task.WhenAll(save, upload);
+                var card = await save;
+                Assert.NotEqual(originalUrl, await upload);
+                await using var verification = Context();
+                Assert.Equal(originalUrl, (await verification.WishlistItems.AsNoTracking().SingleAsync(item => item.Id == card.Id)).ImageUrl);
+                Assert.True(images.Exists(original));
+                Assert.Equal(2, Directory.GetFiles(Path.Combine(imageRoot, owner.Id.ToString("D"))).Length);
+            }
+            finally
+            {
+                saveGate.Release.TrySetResult();
+                await save;
+            }
+        }
+        finally
+        {
+            await using var drop = new NpgsqlCommand($"DROP SCHEMA \"{schema}\" CASCADE", admin);
+            await drop.ExecuteNonQueryAsync();
+            Directory.Delete(imageRoot, recursive: true);
+        }
+    }
     private sealed class PostgresFactAttribute : FactAttribute
     {
         public PostgresFactAttribute()

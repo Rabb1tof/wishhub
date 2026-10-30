@@ -12,7 +12,7 @@ public class AddWishlistItemRequest : IValidatableObject
     [Required]
     public string Name { get; set; } = string.Empty;
 
-    [HttpUrl]
+    [WishlistImageUrl]
     public string? ImageUrl { get; set; }
 
     public decimal? Price { get; set; }
