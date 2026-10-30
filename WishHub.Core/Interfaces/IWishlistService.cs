@@ -9,6 +9,6 @@ public interface IWishlistService
     Task DeleteItemAsync(Guid ownerId, Guid itemId, CancellationToken ct = default);
     Task<IReadOnlyList<WishlistItemDto>> GetItemsAsync(Guid ownerId, Guid? viewerId, CancellationToken ct = default);
     Task<WishlistItemDto?> ReserveItemAsync(Guid itemId, Guid reserverId, CancellationToken ct = default);
-    Task<WishlistItemDto?> CancelReservationAsync(Guid itemId, Guid reserverId, CancellationToken ct = default);
+    Task<bool> CancelReservationAsync(Guid itemId, Guid reserverId, CancellationToken ct = default);
     Task<bool> CanViewWishlistAsync(Guid ownerId, Guid? viewerId, CancellationToken ct = default);
 }

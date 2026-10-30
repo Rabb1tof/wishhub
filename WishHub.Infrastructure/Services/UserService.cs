@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -54,6 +55,7 @@ public class UserService : IUserService
 
     public async Task<UserProfileDto?> UpdateProfileAsync(Guid userId, UpdateProfileRequest request, CancellationToken ct = default)
     {
+        Validator.ValidateObject(request, new ValidationContext(request), validateAllProperties: true);
         var user = await _userManager.FindByIdAsync(userId.ToString());
         if (user == null)
             return null;
@@ -64,10 +66,9 @@ public class UserService : IUserService
         if (request.Bio != null)
             user.Bio = request.Bio;
 
-        if (request.WishlistPrivacy != null &&
-            Enum.TryParse<WishlistPrivacy>(request.WishlistPrivacy, ignoreCase: true, out var privacy))
+        if (request.WishlistPrivacy != null)
         {
-            user.WishlistPrivacy = privacy;
+            user.WishlistPrivacy = Enum.Parse<WishlistPrivacy>(request.WishlistPrivacy, ignoreCase: true);
         }
 
         var result = await _userManager.UpdateAsync(user);
