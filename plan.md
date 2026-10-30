@@ -1,3 +1,5 @@
+> **Текущая работа после глубокого ревью:** [docs/security-fix-plan.md](docs/security-fix-plan.md). Исправления готовятся отдельно от main.
+
 # Wishlist App — Детальный план реализации
 
 > **Актуальный план облегчения:** [docs/lightweight-wishlist-plan.md](docs/lightweight-wishlist-plan.md).
