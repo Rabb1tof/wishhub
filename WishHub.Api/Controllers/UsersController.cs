@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using WishHub.Core.DTOs.Users;
 using WishHub.Core.Interfaces;
+using WishHub.Api.Authentication;
 
 namespace WishHub.Api.Controllers;
 
@@ -65,7 +66,7 @@ public class UsersController : ControllerBase
 
     [Authorize]
     [HttpPost("me/password")]
-    public async Task<IActionResult> ChangePassword(ChangePasswordRequest request)
+    public async Task<IActionResult> ChangePassword(ChangePasswordRequest request, [FromServices] IConfiguration configuration)
     {
         var userId = GetCurrentUserId()!;
         var success = await _userService.ChangePasswordAsync(userId.Value, request);
@@ -73,6 +74,7 @@ public class UsersController : ControllerBase
         if (!success)
             return BadRequest(new { error = "Failed to change password" });
 
+        OAuthCompletion.ClearPending(Request, Response, configuration);
         return NoContent();
     }
 

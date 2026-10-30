@@ -21,9 +21,9 @@ namespace WishHub.Api.Controllers;
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
 public class OAuthController : ControllerBase
 {
-    private const string VkStateCookie = "vk_oauth_state";
-    private const string VkVerifierCookie = "vk_oauth_verifier";
-    private const string VkLinkUserCookie = "vk_oauth_link_user";
+    private const string VkStateCookie = OAuthCompletion.VkStateCookieName;
+    private const string VkVerifierCookie = OAuthCompletion.VkVerifierCookieName;
+    private const string VkLinkUserCookie = OAuthCompletion.VkLinkCookieName;
     private const string ProviderVk = "vk";
     private const string ProviderTelegram = "telegram";
 
@@ -63,6 +63,8 @@ public class OAuthController : ControllerBase
             return RedirectToFrontend("/login", ("error", "vk_not_configured"));
         }
 
+        // A regular sign-in must not inherit an abandoned account-link flow.
+        Response.Cookies.Delete(VkLinkUserCookie, BuildCookieOptions(TimeSpan.Zero));
         var (state, challenge) = PrepareVkAuthCookies();
         return Redirect(BuildVkAuthUrl(state, challenge));
     }
@@ -518,14 +520,8 @@ public class OAuthController : ControllerBase
         return string.IsNullOrWhiteSpace(full) ? null : full;
     }
 
-    private CookieOptions BuildCookieOptions(TimeSpan lifetime) => new()
-    {
-        HttpOnly = true,
-        Secure = Request.IsHttps, // в dev (http) = false, иначе не отправится
-        SameSite = SameSiteMode.Lax, // нужен Lax для редиректа с внешнего сайта
-        Expires = DateTimeOffset.UtcNow.Add(lifetime),
-        Path = "/",
-    };
+    private CookieOptions BuildCookieOptions(TimeSpan lifetime) =>
+        OAuthCompletion.StateCookieOptions(Request, _configuration, lifetime);
 
     private async Task<VkTokenResponse?> ExchangeVkCodeAsync(
         string code,

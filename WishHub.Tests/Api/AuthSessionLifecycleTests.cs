@@ -42,7 +42,9 @@ public sealed class AuthSessionLifecycleTests : IAsyncLifetime
             ["Jwt:Secret"] = "Local-only-session-regression-secret-with-more-than-64-characters-123456",
             ["Jwt:Issuer"] = "WishHubTests", ["Jwt:Audience"] = "WishHubTestUsers",
             ["Jwt:AccessTokenExpiryMinutes"] = "7", ["Jwt:RefreshTokenExpiryDays"] = "30",
-            ["Frontend:Url"] = "https://wishhub.example"
+            ["Frontend:Url"] = "https://wishhub.example",
+            ["OAuth:Vk:ClientId"] = "local-test-client", ["OAuth:Vk:ClientSecret"] = "local-test-only-secret",
+            ["OAuth:Vk:RedirectUri"] = "https://wishhub.example/api/auth/vk/callback"
         }).Build();
         _host = await new HostBuilder().ConfigureWebHost(web => web.UseTestServer()
             .ConfigureServices(services =>
@@ -55,6 +57,7 @@ public sealed class AuthSessionLifecycleTests : IAsyncLifetime
                         options.User.RequireUniqueEmail = true;
                     })
                     .AddEntityFrameworkStores<AppDbContext>();
+                services.AddHttpClient();
                 services.AddScoped<ITokenService, TokenService>();
                 services.AddScoped<IUserService, UserService>();
                 services.AddAuthentication("SessionTest")
@@ -172,7 +175,9 @@ public sealed class AuthSessionLifecycleTests : IAsyncLifetime
         var pending = await PendingAsync(first.User.Id);
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/logout");
         request.Headers.Add("X-Test-User", first.User.Id.ToString());
-        Assert.Equal(HttpStatusCode.NoContent, (await _client.SendAsync(request)).StatusCode);
+        var logout = await _client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
+        AssertPendingCookiesDeleted(logout);
         Assert.Equal(HttpStatusCode.Unauthorized, (await CompleteAsync(pending)).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized,
             (await _client.PostAsJsonAsync("/api/auth/refresh", new { first.RefreshToken })).StatusCode);
@@ -186,15 +191,17 @@ public sealed class AuthSessionLifecycleTests : IAsyncLifetime
         var first = await RegisterAsync();
         var other = await RegisterAsync();
         var ticket = await PendingAsync(first.User.Id);
-        using (var scope = _host.Services.CreateScope())
+        using var change = new HttpRequestMessage(HttpMethod.Post, "/api/users/me/password")
         {
-            var changed = await scope.ServiceProvider.GetRequiredService<IUserService>().ChangePasswordAsync(first.User.Id,
-                new ChangePasswordRequest { CurrentPassword = Password, NewPassword = "Local-NewPassword456!" });
-            Assert.True(changed);
-        }
-        Assert.Equal(HttpStatusCode.Unauthorized, (await CompleteAsync(ticket)).StatusCode);
+            Content = JsonContent.Create(new ChangePasswordRequest { CurrentPassword = Password, NewPassword = "Local-NewPassword456!" })
+        };
+        change.Headers.Add("X-Test-User", first.User.Id.ToString());
+        var changed = await _client.SendAsync(change);
+        Assert.Equal(HttpStatusCode.NoContent, changed.StatusCode);
+        AssertPendingCookiesDeleted(changed);
         Assert.Equal(HttpStatusCode.Unauthorized,
             (await _client.PostAsJsonAsync("/api/auth/refresh", new { first.RefreshToken })).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await CompleteAsync(ticket)).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized,
             (await _client.PostAsJsonAsync("/api/auth/login", new { usernameOrEmail = first.User.Username, password = Password })).StatusCode);
         Assert.Equal(HttpStatusCode.OK,
@@ -212,6 +219,41 @@ public sealed class AuthSessionLifecycleTests : IAsyncLifetime
                 new ChangePasswordRequest { CurrentPassword = "Wrong-Password123!", NewPassword = "Local-NewPassword456!" }));
         Assert.Equal(HttpStatusCode.OK,
             (await _client.PostAsJsonAsync("/api/auth/refresh", new { session.RefreshToken })).StatusCode);
+    }
+
+    [Fact]
+    public async Task VkAuthorize_OnlyStartsFlow_UsesSecureStateCookiesAndClearsStaleLink()
+    {
+        // Only local initiation: no request to a VK endpoint and no provider callback is executed.
+        var response = await _client.GetAsync("/api/auth/vk");
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.Equal("https://id.vk.com/authorize", response.Headers.Location!.GetLeftPart(UriPartial.Path));
+        var cookies = response.Headers.GetValues("Set-Cookie").Select(value => SetCookieHeaderValue.Parse(value)).ToArray();
+        Assert.Equal(3, cookies.Length);
+        foreach (var cookie in cookies)
+        {
+            Assert.True(cookie.HttpOnly);
+            Assert.True(cookie.Secure);
+            Assert.Equal(Microsoft.Net.Http.Headers.SameSiteMode.Lax, cookie.SameSite);
+            Assert.Equal("/", cookie.Path.Value);
+        }
+        Assert.True(Assert.Single(cookies, cookie => cookie.Name == "vk_oauth_state").Expires > DateTimeOffset.UtcNow);
+        Assert.True(Assert.Single(cookies, cookie => cookie.Name == "vk_oauth_verifier").Expires > DateTimeOffset.UtcNow);
+        Assert.True(Assert.Single(cookies, cookie => cookie.Name == "vk_oauth_link_user").Expires < DateTimeOffset.UtcNow);
+    }
+
+    private static void AssertPendingCookiesDeleted(HttpResponseMessage response)
+    {
+        var cookies = response.Headers.GetValues("Set-Cookie").Select(value => SetCookieHeaderValue.Parse(value)).ToArray();
+        Assert.Equal(new[] { "vk_oauth_link_user", "vk_oauth_state", "vk_oauth_verifier", CookieName }.Order(),
+            cookies.Select(cookie => cookie.Name.Value).Order());
+        Assert.All(cookies, cookie =>
+        {
+            Assert.True(cookie.HttpOnly);
+            Assert.True(cookie.Secure);
+            Assert.True(cookie.Expires < DateTimeOffset.UtcNow);
+            Assert.True(cookie.MaxAge is null || cookie.MaxAge <= TimeSpan.Zero);
+        });
     }
 
     private async Task<AuthResponse> RegisterAsync()

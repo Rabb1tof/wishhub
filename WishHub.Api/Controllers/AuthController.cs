@@ -180,7 +180,7 @@ public class AuthController : ControllerBase
 
     [Authorize]
     [HttpPost("logout")]
-    public async Task<IActionResult> Logout(CancellationToken ct = default)
+    public async Task<IActionResult> Logout([FromServices] IConfiguration configuration, CancellationToken ct = default)
     {
         var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         if (userId == null)
@@ -193,6 +193,7 @@ public class AuthController : ControllerBase
         await _dbContext.RefreshTokens.Where(rt => rt.UserId == Guid.Parse(userId) && !rt.IsRevoked)
             .ExecuteUpdateAsync(setters => setters.SetProperty(rt => rt.IsRevoked, true), ct);
         await transaction.CommitAsync(ct);
+        OAuthCompletion.ClearPending(Request, Response, configuration);
         return NoContent();
     }
 
