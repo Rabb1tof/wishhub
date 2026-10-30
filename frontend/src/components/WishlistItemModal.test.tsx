@@ -280,3 +280,36 @@ it('ignores metadata queued before a URL edit in the same render batch', async (
   expect(screen.queryByRole('button', { name: 'Применить найденное' })).toBeNull()
   expect(adapter).not.toHaveBeenCalled()
 })
+
+it.each([
+  { label: 'Tab', shiftKey: false, destination: 'Закрыть форму' },
+  { label: 'Shift+Tab', shiftKey: true, destination: 'Сохранить' },
+])('keeps $label inside the dialog after a duplicate save error', async ({ shiftKey, destination }) => {
+  let finishSave!: () => void
+  const pendingSave = new Promise<void>((resolve) => { finishSave = resolve })
+  adapter.mockImplementationOnce(async (config) => {
+    await pendingSave
+    throw new AxiosError('Duplicate', 'ERR_BAD_RESPONSE', config, undefined, {
+      data: {}, status: 409, statusText: 'Conflict', headers: {}, config,
+    })
+  })
+  const { onClose } = open()
+  basic()
+  save()
+  const dialog = screen.getByRole('dialog')
+  await waitFor(() => expect(document.activeElement).toBe(dialog))
+  const whileSaving = new KeyboardEvent('keydown', { key: 'Tab', shiftKey, bubbles: true, cancelable: true })
+  dialog.dispatchEvent(whileSaving)
+  expect(whileSaving.defaultPrevented).toBe(true)
+  expect(document.activeElement).toBe(dialog)
+
+  await act(async () => { finishSave() })
+  expect((await screen.findByRole('alert')).textContent).toContain('уже есть')
+  expect(document.activeElement).toBe(dialog)
+  const afterError = new KeyboardEvent('keydown', { key: 'Tab', shiftKey, bubbles: true, cancelable: true })
+  dialog.dispatchEvent(afterError)
+  expect(afterError.defaultPrevented).toBe(true)
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: destination }))
+  expect(input('Название').value).toBe('Manual gift')
+  expect(onClose).not.toHaveBeenCalled()
+})
