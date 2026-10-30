@@ -111,7 +111,7 @@ public class Program
         app.UseRateLimiter();
 
         app.MapControllers();
-        app.MapHub<ChatHub>("/hubs/chat");
+        app.MapHub<ChatHub>("/hubs/chat", options => options.CloseOnAuthenticationExpiration = true);
         app.MapHealthChecks("/health");
 
         // Run database migrations at startup

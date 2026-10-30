@@ -1,3 +1,10 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Net.WebSockets;
+using System.Security.Claims;
+using System.Text;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.IdentityModel.Tokens;
 using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -145,6 +152,49 @@ public class AuthControllerTests : IClassFixture<WebApplicationFactory<Program>>
 
         // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task HubConnection_AuthenticationExpiry_ClosesTheExistingConnection()
+    {
+        // Start the actual Program pipeline before creating the short-lived local test credential.
+        var websocketClient = _factory.Server.CreateWebSocketClient();
+        var configuration = _factory.Services.GetRequiredService<IConfiguration>();
+        var jwt = new JwtSecurityToken(configuration["Jwt:Issuer"], configuration["Jwt:Audience"],
+            [new Claim(ClaimTypes.NameIdentifier, Guid.NewGuid().ToString())],
+            expires: DateTime.UtcNow.AddSeconds(4),
+            signingCredentials: new SigningCredentials(
+                new SymmetricSecurityKey(Encoding.ASCII.GetBytes(configuration["Jwt:Secret"]!)), SecurityAlgorithms.HmacSha256));
+        var token = new JwtSecurityTokenHandler().WriteToken(jwt);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+        using var socket = await websocketClient.ConnectAsync(
+            new Uri("ws://localhost/hubs/chat?access_token=" + token), deadline.Token);
+        var handshake = Encoding.UTF8.GetBytes("{\"protocol\":\"json\",\"version\":1}\u001e");
+        await socket.SendAsync(handshake.AsMemory(), WebSocketMessageType.Text, true, deadline.Token);
+        var buffer = new byte[1024];
+        var accepted = await socket.ReceiveAsync(buffer.AsMemory(), deadline.Token);
+        Assert.Equal(WebSocketMessageType.Text, accepted.MessageType);
+        Assert.StartsWith("{}", Encoding.UTF8.GetString(buffer, 0, accepted.Count));
+
+        var closed = false;
+        try
+        {
+            while (!closed)
+            {
+                var received = await socket.ReceiveAsync(buffer.AsMemory(), deadline.Token);
+                closed = received.MessageType == WebSocketMessageType.Close ||
+                    Encoding.UTF8.GetString(buffer, 0, received.Count).Contains("\"type\":7", StringComparison.Ordinal);
+            }
+        }
+        catch (WebSocketException)
+        {
+            closed = true;
+        }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+        {
+            Assert.Fail("An established connection remained open after its authentication expired.");
+        }
+        Assert.True(closed);
     }
 
     private record LoginResponse(string AccessToken, string RefreshToken, DateTime ExpiresAt);
