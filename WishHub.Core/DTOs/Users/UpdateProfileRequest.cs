@@ -12,6 +12,4 @@ public class UpdateProfileRequest
 
     public string? WishlistPrivacy { get; set; } // Public, FriendsOnly, Private
 
-    [Range(1, 168)]
-    public int? PriceRefreshIntervalHours { get; set; }
 }

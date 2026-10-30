@@ -71,6 +71,3 @@ TestResults/
 
 # Docker volumes
 docker-volumes/
-
-# Playwright (for product parsing)
-playwright-browser-data/
