@@ -1,5 +1,18 @@
 # AGENTS.md
 
+## Current implementation: lightweight wishlist cards
+
+The implementation in `docs/lightweight-wishlist-plan.md` supersedes the historical browser, image-proxy, background-job and price-monitoring requirements below. Required card fields are URL and nonblank name only. Image and price are optional, editable and clearable. Each WishlistItem owns its values; legacy Product is migration compatibility only.
+
+Metadata is optional assistance triggered only by a button. Saving/updating/listing never fetches metadata. No Playwright, Selenium, Chromium, CDP, stealth, Hangfire or Redis may be introduced for runtime, fallback or tests. Do not execute old plan items to reintroduce them.
+
+Use the card's nullable imageUrl directly with lazy-loading, no-referrer and a placeholder. Broken photos do not block saving. This replaces the historical mandatory image-proxy rule. Preserve avatars.
+
+Use strict parsed URL/host checks and bounded HTTP calls. Retain SKU/variant parameters. Source failures, CAPTCHA, missing keys and quotas leave the manual form usable. Do not silently overwrite dirty fields or apply responses for a previous URL. External-service pricing pages are not proof of correct metadata.
+
+Keep reservation state hidden from the owner and preserve persisted enum values. Test new migrations on PostgreSQL with existing card IDs, reservations and nullable values. Down must not silently discard independent manual data. Preserve user volumes. API and frontend contracts change together; see `docs/lightweight-rollout.md`.
+
+
 This file is the primary instruction set for any AI agent (Codex, Claude, etc.) working on this repository.
 Read it fully before touching any file. Re-read the relevant sections before each task.
 
@@ -25,7 +38,7 @@ Read it fully before touching any file. Re-read the relevant sections before eac
 ## Project Overview
 
 **WishHub** is a full-stack web application where users can:
-- Add products from Ozon, Wildberries, and Yandex Market by pasting a URL — the app parses price, name, and image automatically
+- Save editable cards with URL and name; optionally obtain name/image with a button. Price and photo are optional
 - Manage a personal wishlist with filters, sorting, and custom item names
 - Follow other users, send friend requests, and browse friends' wishlists
 - Reserve items from a friend's wishlist (hidden from the wishlist owner)
@@ -39,9 +52,8 @@ Read it fully before touching any file. Re-read the relevant sections before eac
 | API | .NET 9 — ASP.NET Core Web API |
 | ORM | Entity Framework Core 9 |
 | Database | PostgreSQL 16 |
-| Cache | Redis 7 |
-| Scraping | Microsoft.Playwright (headless Chromium) + HtmlAgilityPack |
-| Background jobs | Hangfire + Hangfire.PostgreSql |
+| Metadata cache | Bounded in-process cache |
+| Metadata | Bounded HTTP adapters, optional button-triggered action |
 | Real-time | ASP.NET Core SignalR |
 | Auth | ASP.NET Core Identity + JWT Bearer + VK OAuth2 + Telegram Widget |
 | Frontend | React 18, Vite, TypeScript |
@@ -289,7 +301,7 @@ If a task requires installing a new NuGet or npm package, add it to the correct 
 ### Dependency injection
 
 - Register services in `WishHub.Api/Extensions/ServiceCollectionExtensions.cs` using extension methods grouped by feature (e.g. `AddParsing()`, `AddAuth()`, `AddHangfire()`)
-- Use `AddScoped` for services that touch DbContext, `AddSingleton` for stateless services (e.g. `ParserFactory`, `IPlaywrightBrowserPool`)
+- Use `AddScoped` for services that touch DbContext; select metadata-service lifetimes according to their bounded HTTP/cache state
 
 ### Validation
 
@@ -319,13 +331,10 @@ If a task requires installing a new NuGet or npm package, add it to the correct 
 
 ### Images
 
-- Never use a product image URL directly from the API response.
-- Always construct the proxy URL:
-  ```ts
-  const proxyUrl = (imageUrl: string) =>
-    `/api/images/proxy?url=${encodeURIComponent(imageUrl)}`;
-  ```
-- The `ProductDto` from the API already includes `imageProxyUrl` — use that field directly.
+- Use nullable imageUrl directly with lazy-loading, no-referrer and an error placeholder.
+- Do not add an image proxy or Redis just to display product images.
+- Validate HTTP(S) schemes; treat metadata as data, never injected HTML.
+- Preserve existing avatar storage.
 
 ### Routing
 
@@ -523,7 +532,7 @@ Open a PR back to `main` afterwards so the fix doesn't get lost.
 ## What You Must Never Do
 
 - **Never expose `ReservedById` or `IsReserved=true` to the wishlist owner.** The owner must not know who reserved their items or that items are reserved. Strip these fields in the DTO mapping when the requester is the owner.
-- **Never store a raw product image URL in the frontend.** Always route through `/api/images/proxy`.
+- **Never let failed metadata or images block manual card saving.** Required fields are URL and name only.
 - **Never use `DateTime.Now`.** Use `DateTime.UtcNow` everywhere.
 - **Never use `.Result` or `.Wait()` on a Task.** This causes deadlocks.
 - **Never query the database inside a loop.** Use `Include`, batch queries, or `Contains` with a list.

@@ -1,9 +1,12 @@
+import { formatItemSource } from '@/utils/wishlist'
 import { useParams, Link } from 'react-router-dom'
 import { Layout } from '@/components/Layout'
 import { UserAvatar } from '@/components/UserAvatar'
 import { ShareProfileButton } from '@/components/ShareProfileButton'
 import { useProfile } from '@/api/useProfile'
-import { useWishlist, useReserveItem } from '@/api/useWishlist'
+import { useWishlist } from '@/api/useWishlist'
+import { ItemImage } from '@/components/ItemImage'
+import { ItemReservation } from '@/components/ItemReservation'
 import { useSendRequest, useRemoveFriend } from '@/api/useFriends'
 import { useAuthStore } from '@/store/auth'
 import type { WishlistItem } from '@/types/wishlist'
@@ -11,7 +14,7 @@ import type { WishlistItem } from '@/types/wishlist'
 export function ProfilePage() {
   const { username } = useParams<{ username: string }>()
   const { data: profile, isLoading: profileLoading } = useProfile(username)
-  const { data: wishlist, isLoading: wishlistLoading } = useWishlist(profile?.id)
+  const { data: wishlist, isLoading: wishlistLoading } = useWishlist(profile?.id, Boolean(profile?.id))
   const sendRequest = useSendRequest()
   const removeFriend = useRemoveFriend()
   const currentUser = useAuthStore((s) => s.user)
@@ -134,59 +137,24 @@ export function ProfilePage() {
   )
 }
 
-function PublicWishlistItem({ item, isOwner }: { item: WishlistItem; isOwner?: boolean }) {
-  const reserveItem = useReserveItem()
-
-  const handleReserve = async (e: React.MouseEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    await reserveItem.mutateAsync(item.id)
-  }
-
-  // Форматируем название источника
-  const sourceName = item.product.source === 'Wildberries' ? 'Wildberries'
-    : item.product.source === 'Ozon' ? 'Ozon'
-    : item.product.source === 'YandexMarket' ? 'Яндекс Маркет'
-    : item.product.source
-
+function PublicWishlistItem({ item, isOwner }: { item: WishlistItem; isOwner: boolean }) {
   return (
-    <a
-      href={item.product.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="bg-white rounded-lg shadow overflow-hidden block hover:shadow-lg transition-shadow"
-    >
-      {item.product.imageProxyUrl && (
-        <img
-          src={item.product.imageProxyUrl}
-          alt={item.product.name}
-          className="w-full h-48 object-cover"
-        />
+    <article className="bg-white rounded-lg shadow overflow-hidden hover:shadow-lg transition-shadow">
+      <a href={item.url} target="_blank" rel="noopener noreferrer" className="block">
+        <ItemImage imageUrl={item.imageUrl} name={item.name} />
+        <div className="p-4">
+          <h3 className="font-semibold">{item.name}</h3>
+          <p className="text-gray-600">
+            {item.price === null ? 'Цена не указана' : `${item.price} ${item.currency}`}
+          </p>
+          <p className="text-sm text-gray-500 break-all">{formatItemSource(item.source, item.url)}</p>
+        </div>
+      </a>
+      {!isOwner && (
+        <div className="px-4 pb-4">
+          <ItemReservation item={item} isOwner={isOwner} />
+        </div>
       )}
-      <div className="p-4">
-        <h3 className="font-semibold">{item.customName || item.product.name}</h3>
-        <p className="text-gray-600">
-          {item.product.price} {item.product.currency}
-        </p>
-        <p className="text-sm text-gray-500">{sourceName}</p>
-
-        {/* Владелец не видит статус резервирования */}
-        {!isOwner && (
-          item.isReserved ? (
-            <p className="mt-2 text-sm text-green-600">
-              Зарезервировано
-            </p>
-          ) : (
-            <button
-              onClick={handleReserve}
-              disabled={reserveItem.isPending}
-              className="mt-2 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
-            >
-              Зарезервировать
-            </button>
-          )
-        )}
-      </div>
-    </a>
+    </article>
   )
 }

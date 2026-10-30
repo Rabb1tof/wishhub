@@ -1,6 +1,8 @@
+import { formatItemSource } from '@/utils/wishlist'
 import { Link } from 'react-router-dom'
 import { Layout } from '@/components/Layout'
 import { UserAvatar } from '@/components/UserAvatar'
+import { ItemImage } from '@/components/ItemImage'
 import { useFriends } from '@/api/useFriends'
 import { useWishlist } from '@/api/useWishlist'
 
@@ -78,18 +80,13 @@ function FriendWishlist({ userId, user }: { userId: string; user: { username: st
             to={`/wishlist/${user.username}`}
             className="border rounded-lg overflow-hidden block hover:shadow-md transition-shadow"
           >
-            {item.product.imageProxyUrl && (
-              <img
-                src={item.product.imageProxyUrl}
-                alt={item.product.name}
-                className="w-full h-32 object-cover"
-              />
-            )}
+            <ItemImage imageUrl={item.imageUrl} name={item.name} className="w-full h-32 object-cover" />
             <div className="p-2">
-              <p className="text-sm font-medium truncate">{item.customName || item.product.name}</p>
+              <p className="text-sm font-medium truncate">{item.name}</p>
               <p className="text-sm text-gray-600">
-                {item.product.price} {item.product.currency}
+                {item.price === null ? 'Цена не указана' : `${item.price} ${item.currency}`}
               </p>
+              <p className="text-xs text-gray-500 truncate">{formatItemSource(item.source, item.url)}</p>
             </div>
           </Link>
         ))}
