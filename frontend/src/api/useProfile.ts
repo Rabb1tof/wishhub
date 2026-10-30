@@ -41,9 +41,10 @@ export function useProfile(username?: string) {
   })
 }
 
-export function useMyProfile() {
+export function useMyProfile(enabled = true) {
   return useQuery({
     queryKey: [PROFILE_KEY, ME_KEY],
+    enabled,
     queryFn: async () => {
       const res = await api.get<UserProfileDto>('/users/me')
       return res.data
@@ -71,7 +72,7 @@ export function useChangePassword() {
       const version = useAuthStore.getState().sessionVersion
       await api.post('/users/me/password', data)
       if (useAuthStore.getState().sessionVersion !== version) throw new CanceledError('Session changed')
-      useAuthStore.getState().clearAuth()
+      if (!useAuthStore.getState().clearAuth(version)) throw new CanceledError('Session changed')
     },
   })
 }

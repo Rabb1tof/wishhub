@@ -44,7 +44,7 @@ function mount(path: string) {
 beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } } })
   profile = { ...owner, bio: 'Saved bio', wishlistPrivacy: 'friendsOnly', wishlistItemCount: 0, friendshipStatus: null }
-  useAuthStore.setState({ user: owner, accessToken: 'test-token', refreshToken: 'test-refresh' })
+  useAuthStore.getState().setAuth({ user: owner, accessToken: 'test-token', refreshToken: 'test-refresh', expiresAt: '2099-01-01' })
   Element.prototype.scrollIntoView = vi.fn()
   adapter = vi.fn<AxiosAdapter>(async (config) => {
     if (config.url === '/messages/unread/count') return response(config, 0)

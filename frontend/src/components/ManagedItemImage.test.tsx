@@ -31,7 +31,7 @@ function deferred<T>() {
 beforeEach(() => {
   adapter = vi.fn<AxiosAdapter>(async (config) => response(config, imageBlob))
   api.defaults.adapter = adapter
-  useAuthStore.setState({ user: { id: ownerId, username: 'owner', displayName: 'Owner' }, accessToken: 'image-token', refreshToken: null })
+  useAuthStore.getState().setAuth({ user: { id: ownerId, username: 'owner', displayName: 'Owner' }, accessToken: 'image-token', refreshToken: 'image-refresh', expiresAt: '2099-01-01' })
   let objectId = 0
   createObjectURL = vi.fn<(blob: Blob | MediaSource) => string>(() => `blob:managed-${++objectId}`)
   revokeObjectURL = vi.fn<(url: string) => void>()
@@ -226,7 +226,7 @@ describe('managed ItemImage', () => {
     expect(screen.getByText('Нет изображения')).toBeTruthy()
     expect(adapter.mock.calls.map(([config]) => config.url)).toEqual([path.slice(4), path.slice(4)])
     expect(useAuthStore.getState().accessToken).toBeNull()
-    act(() => useAuthStore.setState({ user: { id: 'another-user', username: 'other', displayName: 'Other' }, accessToken: 'next-token' }))
+    act(() => useAuthStore.getState().setAuth({ user: { id: 'another-user', username: 'other', displayName: 'Other' }, accessToken: 'next-token', refreshToken: 'next-refresh', expiresAt: '2099-01-01' }))
     expect(screen.queryByRole('img')).toBeNull()
     expect((await screen.findByRole('img', { name: 'Gift' })).getAttribute('src')).toBe('blob:managed-2')
     expect(adapter.mock.calls[2][0].headers.get('Authorization')).toBe('Bearer next-token')
@@ -237,7 +237,7 @@ describe('managed ItemImage', () => {
   it('resets the image when account identity changes even if the token value is unchanged', async () => {
     render(<ItemImage imageUrl={path} name="Gift" />)
     await screen.findByRole('img', { name: 'Gift' })
-    act(() => useAuthStore.setState({ user: { id: 'another-user', username: 'other', displayName: 'Other' } }))
+    act(() => useAuthStore.getState().setAuth({ user: { id: 'another-user', username: 'other', displayName: 'Other' }, accessToken: 'image-token', refreshToken: 'next-refresh', expiresAt: '2099-01-01' }))
     expect(screen.queryByRole('img')).toBeNull()
     expect(revokeObjectURL).toHaveBeenCalledExactlyOnceWith('blob:managed-1')
     expect((await screen.findByRole('img', { name: 'Gift' })).getAttribute('src')).toBe('blob:managed-2')

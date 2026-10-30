@@ -38,7 +38,7 @@ export function useLogout() {
       if (useAuthStore.getState().sessionVersion !== version) throw new CanceledError('Session changed')
       await stopConnection()
       if (useAuthStore.getState().sessionVersion !== version) throw new CanceledError('Session changed')
-      useAuthStore.getState().clearAuth()
+      if (!useAuthStore.getState().clearAuth(version)) throw new CanceledError('Session changed')
       queryClient.clear()
     },
   })

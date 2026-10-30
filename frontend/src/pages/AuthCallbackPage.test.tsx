@@ -6,6 +6,7 @@ import axios, { AxiosError } from 'axios'
 import type { AxiosResponse } from 'axios'
 import api from '@/api/client'
 import { useAuthStore } from '@/store/auth'
+import { QueryProvider } from '@/providers/QueryProvider'
 import type { AuthResponse } from '@/types/auth'
 import { AuthCallbackPage } from './AuthCallbackPage'
 
@@ -42,11 +43,11 @@ function mount(entry = '/auth/callback') {
   return render(
     <StrictMode>
       <MemoryRouter initialEntries={[entry]}>
-        <Routes>
+        <QueryProvider><Routes>
           <Route path="/auth/callback" element={<AuthCallbackPage />} />
           <Route path="/" element={<h1>Главная</h1>} />
         </Routes>
-        <Location />
+        <Location /></QueryProvider>
       </MemoryRouter>
     </StrictMode>,
   )

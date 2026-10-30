@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import { AxiosError } from 'axios'
 import type { AxiosAdapter } from 'axios'
 import api from '@/api/client'
 import { useAuthStore } from '@/store/auth'
+import { useUploadAvatar } from '@/api/useProfile'
+import type { ReactNode } from 'react'
 import { stopConnection } from '@/hooks/useSignalR'
 import { requestNotificationPermission } from '@/utils/notifications'
 import { Layout } from './Layout'
@@ -36,8 +38,9 @@ function mount() {
 
 beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
-  useAuthStore.setState({ user, accessToken: 'test-token', refreshToken: null })
+  useAuthStore.getState().setAuth({ user, accessToken: 'test-token', refreshToken: 'test-refresh', expiresAt: '2099-01-01' })
   adapter = vi.fn<AxiosAdapter>(async (config) => {
+    if (config.url === '/users/me') return { config, data: { ...user, wishlistPrivacy: 'public', wishlistItemCount: 0 }, status: 200, statusText: 'OK', headers: {} }
     if (config.url === '/messages/unread/count') return { config, data: 3, status: 200, statusText: 'OK', headers: {} }
     throw new Error(`Unexpected request: ${config.url}`)
   })
@@ -139,4 +142,46 @@ it('keeps a stable avatar tint and recovers from a broken avatar when its URL ch
   expect(screen.getByRole('img', { name: 'Лина Крылова' }).textContent).toBe('Л')
   rerender(<UserAvatar displayName="Лина Крылова" avatarUrl="/avatars/new.png" />)
   expect(screen.getByRole('img', { name: 'Лина Крылова' }).getAttribute('src')).toBe('/avatars/new.png')
+})
+
+it('reloads the uploaded avatar from the current profile after remounting with the stored login user', async () => {
+  const initialUser = { ...user, avatarUrl: '/avatars/old.jpg' }
+  useAuthStore.getState().setAuth({ user: initialUser, accessToken: 'test-token', refreshToken: 'test-refresh', expiresAt: '2099-01-01' })
+  let serverAvatar = initialUser.avatarUrl
+  const normal = adapter.getMockImplementation()!
+  adapter.mockImplementation(async (config) => {
+    if (config.url === '/users/me') return { config, data: { ...user, avatarUrl: serverAvatar, wishlistPrivacy: 'public', wishlistItemCount: 0 }, status: 200, statusText: 'OK', headers: {} }
+    if (config.url === '/users/me/avatar') {
+      serverAvatar = '/avatars/new.jpg'
+      return { config, data: { avatarUrl: serverAvatar }, status: 200, statusText: 'OK', headers: {} }
+    }
+    return normal(config)
+  })
+  const view = mount()
+  const upload = renderHook(() => useUploadAvatar(), {
+    wrapper: ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+  })
+  await act(async () => { await upload.result.current.mutateAsync(new File(['photo'], 'avatar.jpg', { type: 'image/jpeg' })) })
+  await waitFor(() => expect(screen.getByRole('img', { name: user.displayName }).getAttribute('src')).toBe('/avatars/new.jpg'))
+  const stored = JSON.parse(localStorage.getItem('wishhub-auth')!).state
+  expect(stored.user.avatarUrl).toBe('/avatars/old.jpg')
+  view.unmount()
+  upload.unmount()
+  client.clear()
+  client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+  useAuthStore.setState({ user: stored.user })
+  adapter.mockClear()
+  mount()
+  await waitFor(() => expect(screen.getByRole('img', { name: user.displayName }).getAttribute('src')).toBe('/avatars/new.jpg'))
+  expect(adapter.mock.calls.filter(([config]) => config.url === '/users/me').map(([config]) => config.method)).toEqual(['get'])
+  expect(useAuthStore.getState().user?.avatarUrl).toBe('/avatars/old.jpg')
+})
+
+it('does not request a current account profile in an anonymous public layout', async () => {
+  useAuthStore.getState().clearAuth()
+  render(<QueryClientProvider client={client}><MemoryRouter><Layout requireAuth={false}><h1>Public profile</h1></Layout></MemoryRouter></QueryClientProvider>)
+  await act(async () => {})
+  expect(screen.getByRole('heading', { name: 'Public profile' }).textContent).toBe('Public profile')
+  expect(screen.getByRole('link', { name: 'Вход' }).getAttribute('href')).toBe('/login')
+  expect(adapter).not.toHaveBeenCalled()
 })

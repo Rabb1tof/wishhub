@@ -12,8 +12,21 @@ const response = (config: InternalAxiosRequestConfig, data: unknown, status = 20
 const denied = (config: InternalAxiosRequestConfig) => new AxiosError('Unauthorized', 'ERR_BAD_REQUEST', config, undefined, response(config, {}, 401))
 const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r }); return {promise, resolve} }
 let adapter: ReturnType<typeof vi.fn<AxiosAdapter>>
+let locksDescriptor: PropertyDescriptor | undefined
+let storageListeners: EventListenerOrEventListenerObject[]
 beforeEach(async () => {
   vi.resetModules()
+  localStorage.clear()
+  locksDescriptor = Object.getOwnPropertyDescriptor(navigator, 'locks')
+  Object.defineProperty(navigator, 'locks', { configurable: true, value: {
+    request: (_name: string, _options: LockOptions, callback: () => Promise<void>) => callback(),
+  } })
+  storageListeners = []
+  const addEventListener = window.addEventListener.bind(window)
+  vi.spyOn(window, 'addEventListener').mockImplementation((type, listener, options) => {
+    if (type === 'storage') storageListeners.push(listener)
+    addEventListener(type, listener, options)
+  })
   axios = (await import('axios')).default
   useAuthStore = (await import('@/store/auth')).useAuthStore
   api = (await import('./client')).default
@@ -28,6 +41,9 @@ afterEach(() => {
   useAuthStore.getState().clearAuth()
   api.defaults.adapter = originalApiAdapter
   axios.defaults.adapter = originalRawAdapter
+  for (const listener of storageListeners) window.removeEventListener('storage', listener)
+  if (locksDescriptor) Object.defineProperty(navigator, 'locks', locksDescriptor)
+  else Reflect.deleteProperty(navigator, 'locks')
   vi.restoreAllMocks()
 })
 
@@ -144,6 +160,16 @@ describe('session HTTP boundaries', () => {
     })
     await expect(api.post('/auth/link/vk/start')).resolves.toMatchObject({ data: { url: '/normal-provider-route' } })
     expect(adapter.mock.calls.filter(([c]) => c.url?.endsWith('/auth/refresh'))).toHaveLength(1)
+  })
+
+  it.each([{name:'missing Web Locks', mode:'missing'}, {name:'denied Web Locks', mode:'denied'}, {name:'unavailable shared storage',mode:'storage'}])('requires re-login without rotating for $name', async ({mode}) => {
+    if(mode === 'missing') Reflect.deleteProperty(navigator, 'locks')
+    else if(mode === 'denied') Object.defineProperty(navigator, 'locks', {configurable:true,value:{request:async()=>{throw new DOMException('Denied','SecurityError')}}})
+    else vi.spyOn(Storage.prototype, 'getItem').mockImplementation(()=>{throw new DOMException('Unavailable','SecurityError')})
+    adapter.mockImplementation(async config=>{throw denied(config)})
+    await expect(api.get('/wishlist')).rejects.toMatchObject({ name: mode === 'denied' ? 'SecurityError' : 'Error' })
+    expect(adapter.mock.calls.map(([config])=>config.url)).toEqual(['/wishlist'])
+    expect(useAuthStore.getState()).toMatchObject({user:null,accessToken:null,refreshToken:null})
   })
 
 })
