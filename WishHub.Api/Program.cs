@@ -28,6 +28,7 @@ public class Program
 
         builder.Services.AddProductMetadata(builder.Configuration);
         builder.Services.AddWishlistImages(builder.Configuration, builder.Environment);
+        builder.Services.AddAvatarFiles(builder.Configuration, builder.Environment);
 
         // Add SignalR
         builder.Services.AddSingleton<Microsoft.AspNetCore.SignalR.IUserIdProvider, ChatUserIdProvider>();
@@ -103,7 +104,7 @@ public class Program
         app.UseHttpsRedirection();
 
         // Serve static files (avatars)
-        app.UseStaticFiles();
+        app.UseAvatarFiles();
 
         app.UseAuthentication();
         app.UseAuthorization();

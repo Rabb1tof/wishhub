@@ -1,11 +1,11 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using WishHub.Core.DTOs.Users;
 using WishHub.Core.Entities;
 using WishHub.Core.Interfaces;
 using WishHub.Infrastructure.Data;
+using WishHub.Infrastructure.Storage;
 
 namespace WishHub.Infrastructure.Services;
 
@@ -14,18 +14,18 @@ public class UserService : IUserService
     private readonly UserManager<User> _userManager;
     private readonly AppDbContext _dbContext;
     private readonly ILogger<UserService> _logger;
-    private readonly string _avatarUploadPath;
+    private readonly AvatarStorage _avatars;
 
     public UserService(
         UserManager<User> userManager,
         AppDbContext dbContext,
         ILogger<UserService> logger,
-        IConfiguration configuration)
+        AvatarStorage avatars)
     {
         _userManager = userManager;
         _dbContext = dbContext;
         _logger = logger;
-        _avatarUploadPath = configuration["AvatarUploadPath"] ?? "wwwroot/avatars";
+        _avatars = avatars;
     }
 
     public async Task<UserProfileDto?> GetProfileAsync(string username, Guid? viewerId, CancellationToken ct = default)
@@ -93,50 +93,53 @@ public class UserService : IUserService
 
     public async Task<string?> UploadAvatarAsync(Guid userId, Stream fileStream, string contentType, string fileName, CancellationToken ct = default)
     {
-        if (fileStream == null || fileStream.Length == 0)
-            return null;
-
-        // Validate file type
-        var allowedTypes = new[] { "image/jpeg", "image/png", "image/webp" };
-        if (!allowedTypes.Contains(contentType))
-        {
-            _logger.LogWarning("Invalid avatar file type: {ContentType}", contentType);
-            return null;
-        }
-
-        // Max 5MB
-        if (fileStream.Length > 5 * 1024 * 1024)
-        {
-            _logger.LogWarning("Avatar file too large: {Size} bytes", fileStream.Length);
-            return null;
-        }
-
+        ArgumentNullException.ThrowIfNull(fileStream);
+        // Keep replacements for one owner ordered across API instances, like wishlist writes.
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(ct);
+        if (_dbContext.Database.IsNpgsql())
+            await _dbContext.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT 1 FROM \"AspNetUsers\" WHERE \"Id\" = {userId} FOR UPDATE", ct);
         var user = await _userManager.FindByIdAsync(userId.ToString());
         if (user == null)
             return null;
-
-        // Ensure upload directory exists
-        var uploadPath = Path.Combine(Directory.GetCurrentDirectory(), _avatarUploadPath);
-        Directory.CreateDirectory(uploadPath);
-
-        // Generate unique filename
-        var extension = Path.GetExtension(fileName).ToLowerInvariant();
-        var uniqueFileName = $"{userId}_{Guid.NewGuid():N}{extension}";
-        var filePath = Path.Combine(uploadPath, uniqueFileName);
-
-        // Save file
-        using (var stream = File.Create(filePath))
+        await _dbContext.Entry(user).ReloadAsync(ct);
+        var oldUrl = user.AvatarUrl;
+        var avatarUrl = await _avatars.SaveAsync(userId, fileStream, contentType, ct);
+        if (avatarUrl is null)
+            return null;
+        var commitStarted = false;
+        try
         {
-            await fileStream.CopyToAsync(stream, ct);
+            ct.ThrowIfCancellationRequested();
+            user.AvatarUrl = avatarUrl;
+            var result = await _userManager.UpdateAsync(user);
+            if (!result.Succeeded)
+            {
+                user.AvatarUrl = oldUrl;
+                _logger.LogWarning("Avatar profile update failed for {UserId}: {Errors}", userId,
+                    string.Join(", ", result.Errors.Select(error => error.Code)));
+                return null;
+            }
+            // Do not delete a possibly committed file if the database loses the commit response.
+            commitStarted = true;
+            await transaction.CommitAsync(CancellationToken.None);
+            DeleteAvatarIfOwned(userId, oldUrl);
+            return avatarUrl;
         }
+        finally
+        {
+            if (!commitStarted)
+                DeleteAvatarIfOwned(userId, avatarUrl);
+        }
+    }
 
-        // Update user avatar URL
-        var avatarUrl = $"/avatars/{uniqueFileName}";
-        user.AvatarUrl = avatarUrl;
-        await _userManager.UpdateAsync(user);
-
-        _logger.LogInformation("Avatar uploaded for user {UserId}: {AvatarUrl}", userId, avatarUrl);
-        return avatarUrl;
+    private void DeleteAvatarIfOwned(Guid ownerId, string? url)
+    {
+        try { _avatars.DeleteOwned(ownerId, url); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(exception, "Unable to remove an obsolete avatar for {UserId}", ownerId);
+        }
     }
 
     public async Task<IReadOnlyList<UserProfileDto>> SearchUsersAsync(string query, Guid? currentUserId, CancellationToken ct = default)

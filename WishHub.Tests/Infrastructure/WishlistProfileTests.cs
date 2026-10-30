@@ -1,13 +1,13 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using WishHub.Core.DTOs.Users;
 using WishHub.Core.Entities;
 using WishHub.Infrastructure.Data;
 using WishHub.Infrastructure.Services;
+using WishHub.Infrastructure.Storage;
 
 namespace WishHub.Tests.Infrastructure;
 
@@ -26,7 +26,7 @@ public class WishlistProfileTests
         await using var scope = provider.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var service = new UserService(scope.ServiceProvider.GetRequiredService<UserManager<User>>(), db,
-            NullLogger<UserService>.Instance, new ConfigurationBuilder().Build());
+            NullLogger<UserService>.Instance, new AvatarStorage(store.ImageRootPath));
         var updated = await service.UpdateProfileAsync(owner.Id, new UpdateProfileRequest
         {
             DisplayName = "Edited owner", Bio = "My gifts", WishlistPrivacy = "Private"
