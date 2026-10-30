@@ -12,14 +12,12 @@ interface UserProfileDto {
   wishlistPrivacy: string
   friendshipStatus?: 'pending' | 'accepted' | 'blocked' | null
   wishlistItemCount: number
-  priceRefreshIntervalHours: number
 }
 
 interface UpdateProfileRequest {
   displayName?: string
   bio?: string
   wishlistPrivacy?: 'public' | 'friendsOnly' | 'private'
-  priceRefreshIntervalHours?: number
 }
 
 interface ChangePasswordRequest {
