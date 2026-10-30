@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { CanceledError, isAxiosError } from 'axios'
 import api from './client'
-import { useAuthStore, mapAuthResponseFromApi } from '@/store/auth'
+import { useAuthStore, mapAuthResponseFromApi, syncAuthFromStorage } from '@/store/auth'
 import { requestNotificationPermission } from '@/utils/notifications'
 import { stopConnection } from '@/hooks/useSignalR'
 import type { AuthResponseRaw, LoginRequest, RegisterRequest } from '@/types/auth'
@@ -32,8 +32,12 @@ export function useLogout() {
       try {
         await api.post('/auth/logout')
       } catch (error) {
-        // An expired access token must not prevent an explicit local sign-out.
         if (!isAxiosError(error) || error.response?.status !== 401) throw error
+        syncAuthFromStorage()
+        const current = useAuthStore.getState()
+        // A rejected refresh already expired this login and notified its subscribers.
+        if (current.sessionVersion !== version && current.user === null && current.accessToken === null
+          && current.refreshToken === null && current.sessionId === null) return
       }
       if (useAuthStore.getState().sessionVersion !== version) throw new CanceledError('Session changed')
       await stopConnection()

@@ -8,7 +8,7 @@ interface SessionRequest extends InternalAxiosRequestConfig {
   retried?: boolean
 }
 
-const sessionEndpoints = new Set(['/auth/login', '/auth/register', '/auth/telegram', '/auth/refresh', '/auth/complete', '/auth/logout'])
+const sessionEndpoints = new Set(['/auth/login', '/auth/register', '/auth/telegram', '/auth/refresh', '/auth/complete'])
 
 const api = axios.create({ baseURL: '/api', withCredentials: false })
 let sessionController = new AbortController()
