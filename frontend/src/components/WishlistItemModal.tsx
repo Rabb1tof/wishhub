@@ -77,6 +77,11 @@ export function WishlistItemModal({ item, onClose }: { item?: WishlistItem; onCl
       .filter((element) => !element.matches(':disabled'))
     if (!controls.length) { event.preventDefault(); dialog.current?.focus(); return }
     const first = controls[0], last = controls.at(-1)
+    if (document.activeElement === dialog.current) {
+      event.preventDefault()
+      ;(event.shiftKey ? last : first)?.focus()
+      return
+    }
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
   }
