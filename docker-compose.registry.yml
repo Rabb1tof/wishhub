@@ -1,5 +1,5 @@
 # Prebuilt images for EasyPanel. Traefik routes the frontend; no host ports are published.
-# Required environment variables are listed in .env.example. Preserve pgdata and avatars.
+# Required environment variables are listed in .env.example. Preserve pgdata, avatars and wishlist_images.
 services:
   postgres:
     image: postgres:16-alpine
@@ -27,6 +27,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:5000
+      WishlistImages__StoragePath: /app/App_Data/wishlist-images
       ConnectionStrings__Default: Host=postgres;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       Jwt__Secret: ${JWT_SECRET}
       Jwt__Issuer: ${JWT_ISSUER}
@@ -44,6 +45,7 @@ services:
       Metadata__EnableOzonWbray: ${METADATA_ENABLE_OZON_WBRAY:-false}
     volumes:
     - avatars:/app/wwwroot/avatars
+    - wishlist_images:/app/App_Data/wishlist-images
     healthcheck:
       test:
       - CMD
@@ -79,3 +81,4 @@ services:
 volumes:
   pgdata: null
   avatars: null
+  wishlist_images: null

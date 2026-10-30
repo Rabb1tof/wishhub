@@ -9,6 +9,7 @@
 | `Jwt__AccessTokenExpiryMinutes`, `Jwt__RefreshTokenExpiryDays` | Время жизни токенов; это не обновление товаров |
 | `Frontend__Url` | Публичный адрес frontend/OAuth redirects |
 | `OAuth__Vk__*`, `OAuth__Telegram__*` | Используемые провайдеры входа |
+| `WishlistImages__StoragePath` | Папка собственных фото вне wwwroot; локально App_Data/wishlist-images, в Compose /app/App_Data/wishlist-images с volume wishlist_images |
 | `Metadata__EnableOzonWbray` | false по умолчанию; экспериментальное имя/фото Ozon через внешний сервис |
 
 В `.env` для Compose флаг называется `METADATA_ENABLE_OZON_WBRAY`; compose переводит его в `Metadata__EnableOzonWbray`. Настроек Redis, расписания цен, browser storage и CDP больше нет. Старые значения окружения можно удалить после обновления состава запуска.

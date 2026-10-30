@@ -6,7 +6,7 @@ The implementation in `docs/lightweight-wishlist-plan.md` supersedes the histori
 
 Metadata is optional assistance triggered only by a button. Saving/updating/listing never fetches metadata. No Playwright, Selenium, Chromium, CDP, stealth, Hangfire or Redis may be introduced for runtime, fallback or tests. Do not execute old plan items to reintroduce them.
 
-Use the card's nullable imageUrl directly with lazy-loading, no-referrer and a placeholder. Broken photos do not block saving. This replaces the historical mandatory image-proxy rule. Preserve avatars.
+External image URLs load directly with lazy-loading, no-referrer and a placeholder. Photo upload is also supported: JPEG/PNG/WebP up to 5 MiB, stored outside wwwroot in App_Data/wishlist-images (WishlistImages:StoragePath). Managed /api/wishlist-images/{owner}/{file} URLs require authorized API/blob fetching and wishlist privacy checks, never static serving or public caching. Only an owner's existing uploaded file may be attached to that owner's card. Preserve avatars and wishlist_images. No server image decoding or thumbnail packages. This replaces the historical mandatory image-proxy rule.
 
 Use strict parsed URL/host checks and bounded HTTP calls. Retain SKU/variant parameters. Source failures, CAPTCHA, missing keys and quotas leave the manual form usable. Do not silently overwrite dirty fields or apply responses for a previous URL. External-service pricing pages are not proof of correct metadata.
 

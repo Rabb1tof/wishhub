@@ -71,3 +71,6 @@ TestResults/
 
 # Docker volumes
 docker-volumes/
+
+# Private uploaded wishlist photos (runtime data)
+**/App_Data/

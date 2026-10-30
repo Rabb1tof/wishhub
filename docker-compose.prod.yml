@@ -1,4 +1,4 @@
-# Local image builds with nginx TLS termination. Preserve pgdata and avatars.
+# Local image builds with nginx TLS termination. Preserve pgdata, avatars and wishlist_images.
 # Configure .env, DNS and ./ssl before starting this deployment.
 services:
   postgres:
@@ -33,6 +33,7 @@ services:
     environment:
     - ASPNETCORE_ENVIRONMENT=Production
     - ASPNETCORE_URLS=http://+:5000
+    - WishlistImages__StoragePath=/app/App_Data/wishlist-images
     - ConnectionStrings__Default=Host=postgres;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
     - Jwt__Secret=${JWT_SECRET}
     - Jwt__Issuer=${JWT_ISSUER}
@@ -53,6 +54,7 @@ services:
         condition: service_healthy
     volumes:
     - avatars:/app/wwwroot/avatars
+    - wishlist_images:/app/App_Data/wishlist-images
     - ./logs/api:/app/logs
     restart: unless-stopped
     networks:
@@ -91,6 +93,8 @@ volumes:
   pgdata:
     driver: local
   avatars:
+    driver: local
+  wishlist_images:
     driver: local
 networks:
   wishhub-network:
