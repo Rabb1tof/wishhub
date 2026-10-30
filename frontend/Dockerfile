@@ -4,15 +4,15 @@
 # Frontend Dockerfile for WishHub
 # =============================================
 # Notes:
-# - We use node:20-slim (Debian-slim, glibc) instead of node:20 (~1.1 GB)
-#   so rolldown native bindings still work but the build image is ~3x smaller.
-# - Alpine is intentionally avoided because rolldown native bindings break on musl.
+# - Node 24 satisfies the frontend toolchain requirements.
+# - Debian slim keeps glibc native bindings in the build stage.
+# - Only static assets are copied into the nginx Alpine runtime.
 # =============================================
 
 # =============================================
 # Build stage
 # =============================================
-FROM node:20-slim AS build
+FROM node:24-slim AS build
 
 ARG VITE_API_URL=/api
 ARG VITE_HUB_URL=/hubs
@@ -48,6 +48,6 @@ RUN chown -R nginx:nginx /usr/share/nginx/html && \
 EXPOSE 80
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget --quiet --tries=1 --spider http://localhost:80/ || exit 1
+    CMD wget --quiet --tries=1 --spider http://127.0.0.1:80/ || exit 1
 
 CMD ["nginx", "-g", "daemon off;"]

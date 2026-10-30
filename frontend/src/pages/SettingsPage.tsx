@@ -13,7 +13,6 @@ export function SettingsPage() {
   const [displayName, setDisplayName] = useState('')
   const [bio, setBio] = useState('')
   const [wishlistPrivacy, setWishlistPrivacy] = useState<'public' | 'friendsOnly' | 'private'>('public')
-  const [priceRefreshIntervalHours, setPriceRefreshIntervalHours] = useState<number>(24)
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -33,13 +32,12 @@ export function SettingsPage() {
         'private': 'private'
       }
       setWishlistPrivacy(privacyMap[profile.wishlistPrivacy] ?? 'public')
-      setPriceRefreshIntervalHours(profile.priceRefreshIntervalHours ?? 24)
     }
   }, [profile])
 
   const handleProfileSubmit = async (e: FormEvent) => {
     e.preventDefault()
-    await updateProfile.mutateAsync({ displayName, bio, wishlistPrivacy, priceRefreshIntervalHours })
+    await updateProfile.mutateAsync({ displayName, bio, wishlistPrivacy })
   }
 
   const handlePasswordSubmit = async (e: FormEvent) => {
@@ -127,24 +125,6 @@ export function SettingsPage() {
                 <option value="friendsOnly">Только друзья</option>
                 <option value="private">Приватный</option>
               </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Автообновление цен и картинок</label>
-              <select
-                value={priceRefreshIntervalHours}
-                onChange={(e) => setPriceRefreshIntervalHours(Number(e.target.value))}
-                className="mt-1 block w-full px-3 py-2 border rounded-md"
-              >
-                <option value={1}>Каждый час</option>
-                <option value={3}>Каждые 3 часа</option>
-                <option value={6}>Каждые 6 часов</option>
-                <option value={12}>Каждые 12 часов</option>
-                <option value={24}>Раз в сутки</option>
-                <option value={72}>Раз в 3 дня</option>
-                <option value={168}>Раз в неделю</option>
-              </select>
-              <p className="text-xs text-gray-500 mt-1">Сервис автоматически сверяет цены и картинки с маркетплейсами. При изменении цены придёт уведомление.</p>
             </div>
 
             <button

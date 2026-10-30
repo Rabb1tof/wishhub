@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Wishlist cards require only URL and name, with optional editable image and price.
+- Metadata is an explicit action; create/update do not call external sources.
+- Each wishlist item owns its values, with a migration from shared legacy products.
+- Card DTOs are flat; API and frontend must be deployed together.
+
+### Removed
+
+- Browser scraping, stealth/CDP sidecars, background price jobs, Hangfire and Redis.
+- Image proxy and persistent processing polling; images load with no-referrer and fallback.
+
 ## [0.1.1] — 2026-05-16
 
 ### Fixed

@@ -1,31 +1,27 @@
+import { isAxiosError } from 'axios'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from './client'
 import type { WishlistItem, AddWishlistItemRequest, UpdateWishlistItemRequest } from '@/types/wishlist'
 
 const WISHLIST_KEY = 'wishlist'
 
-export function useWishlist(userId?: string) {
+export function useWishlist(userId?: string, enabled = true) {
   const queryKey = userId ? [WISHLIST_KEY, userId] : [WISHLIST_KEY, 'me']
 
   return useQuery({
     queryKey,
+    enabled,
     queryFn: async () => {
       const endpoint = userId ? `/wishlist/user/${userId}` : '/wishlist'
       try {
         const res = await api.get<WishlistItem[]>(endpoint)
         return { items: res.data, hidden: false }
-      } catch (err: any) {
-        if (err?.response?.status === 403) {
+      } catch (err) {
+        if (isAxiosError(err) && err.response?.status === 403) {
           return { items: [] as WishlistItem[], hidden: true }
         }
         throw err
       }
-    },
-    // Если есть товары в процессе загрузки — обновляем каждые 3 секунды
-    refetchInterval: (query) => {
-      const items = query.state.data?.items || []
-      const hasProcessing = items.some(item => item.isProcessing)
-      return hasProcessing ? 3000 : false
     },
   })
 }
@@ -77,20 +73,6 @@ export function useReserveItem() {
   return useMutation({
     mutationFn: async (id: string) => {
       const res = await api.post<WishlistItem>(`/wishlist/${id}/reserve`)
-      return res.data
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [WISHLIST_KEY] })
-    },
-  })
-}
-
-export function useRefreshItem() {
-  const queryClient = useQueryClient()
-
-  return useMutation({
-    mutationFn: async (id: string) => {
-      const res = await api.post<WishlistItem>(`/wishlist/${id}/refresh`)
       return res.data
     },
     onSuccess: () => {

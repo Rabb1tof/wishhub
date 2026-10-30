@@ -13,7 +13,7 @@
 #     a published port to actually reach it).
 #   - Publishes api on http://localhost:5050 (for direct API debugging).
 #   - Loosens the api healthcheck start_period (Apple Silicon runs amd64 images
-#     under emulation, so .NET + Chromium take longer to boot).
+#     under emulation, so .NET take longer to boot).
 # =============================================
 
 services:

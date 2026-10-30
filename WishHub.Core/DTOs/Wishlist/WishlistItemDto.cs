@@ -1,16 +1,19 @@
 namespace WishHub.Core.DTOs.Wishlist;
 
+/// <summary>A standalone wishlist snapshot with reservation details hidden from its owner.</summary>
 public class WishlistItemDto
 {
     public Guid Id { get; set; }
-    public string? CustomName { get; set; }
+    public string Url { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string? ImageUrl { get; set; }
+    public decimal? Price { get; set; }
+    public string Currency { get; set; } = "RUB";
+    public string Source { get; set; } = string.Empty;
     public bool IsReserved { get; set; }
     public bool IsReservedByMe { get; set; }
     public int SortOrder { get; set; }
     public DateTime CreatedAt { get; set; }
-    public bool IsProcessing { get; set; }
-    public string? ProcessingError { get; set; }
-    public ProductDto Product { get; set; } = null!;
     public UserDto? ReservedBy { get; set; }
 }
 

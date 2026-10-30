@@ -72,5 +72,5 @@ TestResults/
 # Docker volumes
 docker-volumes/
 
-# Playwright (for product parsing)
-playwright-browser-data/
+# Private uploaded wishlist photos (runtime data)
+**/App_Data/

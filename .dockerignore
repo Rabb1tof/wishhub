@@ -62,3 +62,6 @@ WishHub.Tests/
 
 # Local scripts
 scripts/dev-tunnel.sh
+
+# Private uploaded wishlist photos (runtime data)
+**/App_Data/

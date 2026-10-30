@@ -11,5 +11,4 @@ public interface IWishlistService
     Task<WishlistItemDto?> ReserveItemAsync(Guid itemId, Guid reserverId, CancellationToken ct = default);
     Task<WishlistItemDto?> CancelReservationAsync(Guid itemId, Guid reserverId, CancellationToken ct = default);
     Task<bool> CanViewWishlistAsync(Guid ownerId, Guid? viewerId, CancellationToken ct = default);
-    Task<WishlistItemDto?> RefreshItemAsync(Guid itemId, Guid ownerId, CancellationToken ct = default);
 }

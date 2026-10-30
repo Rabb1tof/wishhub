@@ -1,35 +1,6 @@
-# =============================================
-# Registry-based Docker Compose for WishHub on EasyPanel
-# =============================================
-#
-# This compose file pulls *prebuilt* images from GitHub Container Registry
-# (ghcr.io/rabb1tof/wishhub-{api,frontend}) instead of building on the host.
-#
-# Designed for EasyPanel deploy:
-#   - No custom `networks:` block — EasyPanel attaches services to its own
-#     project network and (for the public service) the shared Traefik network
-#     so SSL termination happens automatically.
-#   - No `ports:` on the frontend — EasyPanel routes the domain to it via
-#     Traefik directly through the Docker network. Publishing port 80 to
-#     the host would CONFLICT with EasyPanel's own Traefik on :80/:443.
-#
-# Required environment variables (set them in EasyPanel → Project → Env):
-#   IMAGE_OWNER       - GHCR namespace (lowercase), defaults to "rabb1tof"
-#   IMAGE_TAG         - image tag to deploy, defaults to "latest"
-#   PUBLIC_URL        - public site URL, e.g. "https://wishhub.rabb1t.tech"
-#   POSTGRES_DB / POSTGRES_USER / POSTGRES_PASSWORD
-#   JWT_SECRET / JWT_ISSUER / JWT_AUDIENCE
-#   JWT_ACCESS_TOKEN_EXPIRY_MINUTES / JWT_REFRESH_TOKEN_EXPIRY_DAYS
-#   VK_CLIENT_ID / VK_CLIENT_SECRET
-#   TELEGRAM_BOT_TOKEN / TELEGRAM_BOT_USERNAME
-#   HANGFIRE_INTERVAL (e.g. 8)
-#   COMPOSE_PROFILES=cloakbrowser + CLOAKBROWSER_CDP_URL=http://cloakbrowser:9222
-# =============================================
-
+# Prebuilt images for EasyPanel. Traefik routes the frontend; no host ports are published.
+# Required environment variables are listed in .env.example. Preserve pgdata, avatars and wishlist_images.
 services:
-  # =============================================
-  # PostgreSQL Database
-  # =============================================
   postgres:
     image: postgres:16-alpine
     environment:
@@ -37,50 +8,15 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - pgdata:/var/lib/postgresql/data
+    - pgdata:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test:
+      - CMD-SHELL
+      - pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}
       interval: 10s
       timeout: 5s
       retries: 5
-
-  # =============================================
-  # Redis Cache
-  # =============================================
-  redis:
-    image: redis:7-alpine
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
-    volumes:
-      - redisdata:/data
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # =============================================
-  # CloakBrowser CDP sidecar (stealth Chromium)
-  # =============================================
-  cloakbrowser:
-    image: cloakhq/cloakbrowser:${CLOAKBROWSER_TAG:-latest}
-    command: cloakserve
-    restart: unless-stopped
-    profiles:
-      - cloakbrowser
-    expose:
-      - "9222"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9222/json/version"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-
-  # =============================================
-  # Backend API (.NET)
-  # =============================================
   api:
     image: ghcr.io/${IMAGE_OWNER:-rabb1tof}/wishhub-api:${IMAGE_TAG:-latest}
     pull_policy: always
@@ -88,54 +24,40 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:5000
-
+      WishlistImages__StoragePath: /app/App_Data/wishlist-images
       ConnectionStrings__Default: Host=postgres;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
-      ConnectionStrings__Redis: redis:6379
-
       Jwt__Secret: ${JWT_SECRET}
       Jwt__Issuer: ${JWT_ISSUER}
       Jwt__Audience: ${JWT_AUDIENCE}
       Jwt__AccessTokenExpiryMinutes: ${JWT_ACCESS_TOKEN_EXPIRY_MINUTES:-60}
       Jwt__RefreshTokenExpiryDays: ${JWT_REFRESH_TOKEN_EXPIRY_DAYS:-30}
-
       Frontend__Url: ${PUBLIC_URL}
-
       OAuth__Vk__ClientId: ${VK_CLIENT_ID}
       OAuth__Vk__ClientSecret: ${VK_CLIENT_SECRET}
       OAuth__Vk__RedirectUri: ${PUBLIC_URL}/api/auth/vk/callback
-
       OAuth__Telegram__BotToken: ${TELEGRAM_BOT_TOKEN}
       OAuth__Telegram__BotUsername: ${TELEGRAM_BOT_USERNAME}
-
-      Hangfire__PriceUpdateIntervalHours: ${HANGFIRE_INTERVAL:-8}
-
-      ImageProxy__CacheTtlHours: "48"
-      ImageProxy__RequestTimeoutSeconds: "10"
-
-      CLOAKBROWSER_CDP_URL: ${CLOAKBROWSER_CDP_URL:-}
-
       Logging__LogLevel__Default: Information
       Logging__LogLevel__Microsoft.AspNetCore: Warning
+      Metadata__EnableOzonWbray: ${METADATA_ENABLE_OZON_WBRAY:-false}
     volumes:
-      - avatars:/app/wwwroot/avatars
-      - playwright_state:/app/playwright-state
+    - avatars:/app/wwwroot/avatars
+    - wishlist_images:/app/App_Data/wishlist-images
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:5000/health"]
+      test:
+      - CMD
+      - wget
+      - --quiet
+      - --tries=1
+      - --spider
+      - http://127.0.0.1:5000/health
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 90s   # Playwright/Chromium initialization can take up to a minute
-
-  # =============================================
-  # Frontend (nginx + built dist) — public entrypoint
-  # =============================================
-  # Reverse-proxies /api, /hubs, /avatars to the api service through the
-  # internal Docker network. EasyPanel routes the public domain here via Traefik.
+      start_period: 90s
   frontend:
     image: ghcr.io/${IMAGE_OWNER:-rabb1tof}/wishhub-frontend:${IMAGE_TAG:-latest}
     pull_policy: always
@@ -144,18 +66,19 @@ services:
       api:
         condition: service_healthy
     expose:
-      - "80"
+    - '80'
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80/"]
+      test:
+      - CMD
+      - wget
+      - --quiet
+      - --tries=1
+      - --spider
+      - http://127.0.0.1:80/
       interval: 30s
       timeout: 5s
       retries: 3
-
-# =============================================
-# Volumes
-# =============================================
 volumes:
-  pgdata:
-  redisdata:
-  avatars:
-  playwright_state:
+  pgdata: null
+  avatars: null
+  wishlist_images: null
