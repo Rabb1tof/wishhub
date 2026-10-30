@@ -52,27 +52,6 @@ public class ChatHub : Hub
         }
     }
 
-    public async Task MarkAsRead(Guid messageId)
-    {
-        var userId = GetUserId();
-        await _messageService.MarkAsReadAsync(messageId, userId);
-
-        // Notify sender that message was read
-        await Clients.Others.SendAsync("MessageRead", new { MessageId = messageId, ReaderId = userId });
-    }
-
-    public async Task JoinGroup(string groupName)
-    {
-        await Groups.AddToGroupAsync(Context.ConnectionId, groupName);
-        _logger.LogInformation("User {UserId} joined group {GroupName}", GetUserId(), groupName);
-    }
-
-    public async Task LeaveGroup(string groupName)
-    {
-        await Groups.RemoveFromGroupAsync(Context.ConnectionId, groupName);
-        _logger.LogInformation("User {UserId} left group {GroupName}", GetUserId(), groupName);
-    }
-
     public override async Task OnConnectedAsync()
     {
         var userId = GetUserId();

@@ -88,11 +88,11 @@ public class WishlistService(AppDbContext dbContext, IWishlistImageStorage image
         var owner = await dbContext.Users.AsNoTracking()
             .Where(u => u.Id == ownerId).Select(u => new { u.WishlistPrivacy })
             .FirstOrDefaultAsync(ct);
-        if (owner == null || owner.WishlistPrivacy == WishlistPrivacy.Private)
+        if (owner == null)
             return false;
-        if (owner.WishlistPrivacy != WishlistPrivacy.FriendsOnly)
+        if (owner.WishlistPrivacy == WishlistPrivacy.Public)
             return true;
-        if (!viewerId.HasValue)
+        if (owner.WishlistPrivacy != WishlistPrivacy.FriendsOnly || !viewerId.HasValue)
             return false;
         return await dbContext.Friendships.AsNoTracking().AnyAsync(f =>
             f.Status == FriendshipStatus.Accepted &&
@@ -122,22 +122,14 @@ public class WishlistService(AppDbContext dbContext, IWishlistImageStorage image
         return MapToDto(item, reserverId);
     }
 
-    public async Task<WishlistItemDto?> CancelReservationAsync(Guid itemId, Guid reserverId, CancellationToken ct = default)
+    public async Task<bool> CancelReservationAsync(Guid itemId, Guid reserverId, CancellationToken ct = default)
     {
-        var item = await dbContext.WishlistItems.AsNoTracking()
-            .FirstOrDefaultAsync(w => w.Id == itemId && w.ReservedById == reserverId && w.IsReserved, ct);
-        if (item == null)
-            return null;
-        var updated = await dbContext.WishlistItems
+        // The reserver can cancel after losing access, without reading or returning private card data.
+        return await dbContext.WishlistItems
             .Where(w => w.Id == itemId && w.ReservedById == reserverId && w.IsReserved)
             .ExecuteUpdateAsync(setters => setters
                 .SetProperty(w => w.IsReserved, false)
-                .SetProperty(w => w.ReservedById, (Guid?)null), ct);
-        if (updated == 0)
-            return null;
-        item.IsReserved = false;
-        item.ReservedById = null;
-        return MapToDto(item, reserverId);
+                .SetProperty(w => w.ReservedById, (Guid?)null), ct) > 0;
     }
 
     private async Task LockOwnerAsync(Guid ownerId, CancellationToken ct)

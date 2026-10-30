@@ -193,7 +193,7 @@ public class WishlistControllerTests : IAsyncLifetime
         Assert.Null(ownerCard.ReservedBy);
         Assert.Empty(await _store.Db.Notifications.ToListAsync());
         Assert.Equal(HttpStatusCode.BadRequest, (await owner.PostAsync($"/api/wishlist/{card.Id}/cancel-reservation", null)).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await reserver.PostAsync($"/api/wishlist/{card.Id}/cancel-reservation", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await reserver.PostAsync($"/api/wishlist/{card.Id}/cancel-reservation", null)).StatusCode);
         ownerUser.WishlistPrivacy = WishlistPrivacy.Private;
         await _store.Db.SaveChangesAsync();
         Assert.Equal(HttpStatusCode.Forbidden, (await reserver.GetAsync($"/api/wishlist/user/{ownerUser.Id}")).StatusCode);
@@ -237,6 +237,112 @@ public class WishlistControllerTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest,
             (await client.PutAsJsonAsync("/api/wishlist/" + card.Id, payload)).StatusCode);
         Assert.Equal("Keep", (await _store.Db.WishlistItems.AsNoTracking().SingleAsync()).Name);
+    }
+    [Fact]
+    public async Task CancelReservation_AfterPrivacyRevoked_ReturnsNoContentAndClearsOnlyOwnReservation()
+    {
+        var (owner, ownerUser) = await AuthenticatedAsync();
+        var (reserver, reserverUser) = await AuthenticatedAsync();
+        var (stranger, _) = await AuthenticatedAsync();
+        var created = await owner.PostAsJsonAsync("/api/wishlist", new { url = "https://shop.example/visible", name = "Visible" });
+        var card = (await created.Content.ReadFromJsonAsync<WishlistItemDto>())!;
+        Assert.Equal(HttpStatusCode.OK, (await reserver.PostAsync($"/api/wishlist/{card.Id}/reserve", null)).StatusCode);
+        var secondCreated = await owner.PostAsJsonAsync("/api/wishlist", new { url = "https://shop.example/second", name = "Keep reserved" });
+        var secondCard = (await secondCreated.Content.ReadFromJsonAsync<WishlistItemDto>())!;
+        Assert.Equal(HttpStatusCode.OK, (await reserver.PostAsync($"/api/wishlist/{secondCard.Id}/reserve", null)).StatusCode);
+        ownerUser.WishlistPrivacy = WishlistPrivacy.Private;
+        await _store.Db.SaveChangesAsync();
+        Assert.Equal(HttpStatusCode.OK, (await owner.PutAsJsonAsync($"/api/wishlist/{card.Id}",
+            new { url = "https://shop.example/private", name = "New private name", price = 123m })).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await reserver.GetAsync($"/api/wishlist/user/{ownerUser.Id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await stranger.PostAsync($"/api/wishlist/{card.Id}/cancel-reservation", null)).StatusCode);
+        Assert.Equal(reserverUser.Id, (await _store.Db.WishlistItems.AsNoTracking().SingleAsync(w => w.Id == card.Id)).ReservedById);
+
+        var response = await reserver.PostAsync($"/api/wishlist/{card.Id}/cancel-reservation", null);
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Empty(await response.Content.ReadAsByteArrayAsync());
+        var saved = await _store.Db.WishlistItems.AsNoTracking().SingleAsync(w => w.Id == card.Id);
+        Assert.False(saved.IsReserved);
+        Assert.Null(saved.ReservedById);
+        Assert.Equal("New private name", saved.Name);
+        Assert.Equal(123m, saved.Price);
+        var preserved = await _store.Db.WishlistItems.AsNoTracking().SingleAsync(w => w.Id == secondCard.Id);
+        Assert.True(preserved.IsReserved);
+        Assert.Equal(reserverUser.Id, preserved.ReservedById);
+        Assert.Equal(HttpStatusCode.BadRequest, (await reserver.PostAsync($"/api/wishlist/{card.Id}/cancel-reservation", null)).StatusCode);
+    }
+
+    [Fact]
+    public async Task PublicWishlist_AnonymousRead_ReturnsCardsWithoutReserverIdentity()
+    {
+        var (owner, ownerUser) = await AuthenticatedAsync();
+        var (reserver, _) = await AuthenticatedAsync();
+        var created = await owner.PostAsJsonAsync("/api/wishlist", new { url = "https://shop.example/public", name = "Shared card" });
+        var card = (await created.Content.ReadFromJsonAsync<WishlistItemDto>())!;
+        Assert.Equal(HttpStatusCode.OK, (await reserver.PostAsync($"/api/wishlist/{card.Id}/reserve", null)).StatusCode);
+
+        using var anonymous = _host.GetTestClient();
+        var response = await anonymous.GetAsync($"/api/wishlist/user/{ownerUser.Id}");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var shared = Assert.Single((await response.Content.ReadFromJsonAsync<WishlistItemDto[]>())!);
+        Assert.Equal(card.Id, shared.Id);
+        Assert.Equal("Shared card", shared.Name);
+        Assert.True(shared.IsReserved);
+        Assert.False(shared.IsReservedByMe);
+        Assert.Null(shared.ReservedBy);
+    }
+
+    [Theory]
+    [InlineData(WishlistPrivacy.Private)]
+    [InlineData(WishlistPrivacy.FriendsOnly)]
+    [InlineData((WishlistPrivacy)3)]
+    public async Task RestrictedWishlist_AnonymousRead_DeniesWithoutContents(WishlistPrivacy privacy)
+    {
+        var (_, owner) = await AuthenticatedAsync(privacy);
+        await _store.Service.AddItemAsync(owner.Id, new() { Url = "https://shop.example/hidden", Name = "Hidden card" });
+        using var anonymous = _host.GetTestClient();
+        var response = await anonymous.GetAsync($"/api/wishlist/user/{owner.Id}");
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.DoesNotContain("Hidden card", await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task PublicSharing_DoesNotAllowAnonymousOwnReadOrMutations()
+    {
+        var (owner, _) = await AuthenticatedAsync();
+        var created = await owner.PostAsJsonAsync("/api/wishlist", new { url = "https://shop.example/keep", name = "Keep" });
+        var card = (await created.Content.ReadFromJsonAsync<WishlistItemDto>())!;
+        using var anonymous = _host.GetTestClient();
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("/api/wishlist")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.PostAsJsonAsync("/api/wishlist", new { url = "https://shop.example/new", name = "New" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.PutAsJsonAsync($"/api/wishlist/{card.Id}", new { url = card.Url, name = "Changed" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.DeleteAsync($"/api/wishlist/{card.Id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.PostAsync($"/api/wishlist/{card.Id}/reserve", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.PostAsync($"/api/wishlist/{card.Id}/cancel-reservation", null)).StatusCode);
+        var saved = Assert.Single(await _store.Db.WishlistItems.AsNoTracking().ToListAsync());
+        Assert.Equal("Keep", saved.Name);
+        Assert.False(saved.IsReserved);
+    }
+    [Fact]
+    public async Task SharedRoute_AuthenticatedViewer_PreservesOwnerAndFriendAccess()
+    {
+        var (ownerClient, owner) = await AuthenticatedAsync(WishlistPrivacy.FriendsOnly);
+        var (friendClient, friend) = await AuthenticatedAsync();
+        var (strangerClient, _) = await AuthenticatedAsync();
+        _store.Db.Friendships.Add(new()
+        {
+            Id = Guid.NewGuid(), RequesterId = friend.Id, AddresseeId = owner.Id,
+            Status = FriendshipStatus.Accepted, CreatedAt = DateTime.UtcNow
+        });
+        await _store.Db.SaveChangesAsync();
+        var card = await _store.Service.AddItemAsync(owner.Id, new() { Url = "https://shop.example/friends", Name = "Friends card" });
+        var path = $"/api/wishlist/user/{owner.Id}";
+        Assert.Equal(card.Id, Assert.Single((await friendClient.GetFromJsonAsync<WishlistItemDto[]>(path))!).Id);
+        Assert.Equal(HttpStatusCode.Forbidden, (await strangerClient.GetAsync(path)).StatusCode);
+        owner.WishlistPrivacy = WishlistPrivacy.Private;
+        await _store.Db.SaveChangesAsync();
+        Assert.Equal(HttpStatusCode.Forbidden, (await friendClient.GetAsync(path)).StatusCode);
+        Assert.Equal(card.Id, Assert.Single((await ownerClient.GetFromJsonAsync<WishlistItemDto[]>(path))!).Id);
     }
     private sealed class TestAuthenticationHandler(IOptionsMonitor<AuthenticationSchemeOptions> options,
         ILoggerFactory logger, UrlEncoder encoder) : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
