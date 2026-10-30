@@ -1,6 +1,7 @@
 import type { MouseEvent } from 'react'
 import { useReserveItem, useCancelReservation } from '@/api/useWishlist'
 import type { WishlistItem } from '@/types/wishlist'
+import './wishlist.css'
 
 export function ItemReservation({ item, isOwner }: { item: WishlistItem; isOwner: boolean }) {
   const reserveItem = useReserveItem()
@@ -18,9 +19,9 @@ export function ItemReservation({ item, isOwner }: { item: WishlistItem; isOwner
   }
 
   return (
-    <div className="mt-2">
+    <div className="wh-reservation">
       {item.isReserved && (
-        <p className="text-sm text-green-600">
+        <p className="wh-reservation-status">
           {item.isReservedByMe
             ? 'Зарезервировано вами'
             : item.reservedBy
@@ -33,13 +34,13 @@ export function ItemReservation({ item, isOwner }: { item: WishlistItem; isOwner
           type="button"
           onClick={handleReservation}
           disabled={pending}
-          className="mt-2 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
+          className="wh-button wh-button--quiet"
         >
           {pending ? 'Сохранение...' : item.isReservedByMe ? 'Отменить резервирование' : 'Зарезервировать'}
         </button>
       )}
       {(reserveItem.isError || cancelReservation.isError) && (
-        <p role="alert" className="mt-2 text-sm text-red-600">Не удалось изменить резервирование. Попробуйте ещё раз.</p>
+        <p role="alert" className="wh-wishlist-error">Не удалось изменить резервирование. Попробуйте ещё раз.</p>
       )}
     </div>
   )

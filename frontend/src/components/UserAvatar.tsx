@@ -1,3 +1,4 @@
+import { useState } from 'react'
 
 interface UserAvatarProps {
   displayName: string
@@ -6,28 +7,18 @@ interface UserAvatarProps {
   className?: string
 }
 
-const sizeClasses = {
-  sm: 'w-8 h-8 text-sm',
-  md: 'w-10 h-10 text-lg',
-  lg: 'w-20 h-20 text-3xl',
-}
+const tints = ['#dde9e2', '#e0e8ed', '#ece4dc', '#eedfe0']
 
 export function UserAvatar({ displayName, avatarUrl, size = 'md', className = '' }: UserAvatarProps) {
-  const initials = displayName?.charAt(0).toUpperCase() || '?'
+  const [failedUrl, setFailedUrl] = useState<string | null>(null)
+  const characters = Array.from(displayName.trim())
+  const initial = characters[0]?.toLocaleUpperCase() || '?'
+  const hash = characters.reduce((value, character) => (value * 31 + (character.codePointAt(0) ?? 0)) >>> 0, 0)
+  const classes = `wh-avatar wh-avatar--${size} ${className}`
 
-  if (avatarUrl) {
-    return (
-      <img
-        src={avatarUrl}
-        alt={displayName}
-        className={`${sizeClasses[size]} rounded-full object-cover ${className}`}
-      />
-    )
+  if (avatarUrl && avatarUrl !== failedUrl) {
+    return <img src={avatarUrl} alt={displayName} className={classes} onError={() => setFailedUrl(avatarUrl)} />
   }
 
-  return (
-    <div className={`${sizeClasses[size]} rounded-full bg-gray-300 flex items-center justify-center font-bold text-gray-600 ${className}`}>
-      {initials}
-    </div>
-  )
+  return <span role="img" aria-label={displayName} className={classes} style={{ backgroundColor: tints[hash % tints.length] }}>{initial}</span>
 }
