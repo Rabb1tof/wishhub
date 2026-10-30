@@ -4,7 +4,7 @@
 # Frontend Dockerfile for WishHub
 # =============================================
 # Notes:
-# - We use node:20-slim (Debian-slim, glibc) instead of node:20 (~1.1 GB)
+# - We use node:24-slim (Debian-slim, glibc) instead of node:20 (~1.1 GB)
 #   so rolldown native bindings still work but the build image is ~3x smaller.
 # - Alpine is intentionally avoided because rolldown native bindings break on musl.
 # =============================================
@@ -12,7 +12,7 @@
 # =============================================
 # Build stage
 # =============================================
-FROM node:20-slim AS build
+FROM node:24-slim AS build
 
 ARG VITE_API_URL=/api
 ARG VITE_HUB_URL=/hubs
