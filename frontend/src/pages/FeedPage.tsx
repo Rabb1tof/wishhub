@@ -1,96 +1,62 @@
-import { formatItemSource } from '@/utils/wishlist'
 import { Link } from 'react-router-dom'
 import { Layout } from '@/components/Layout'
 import { UserAvatar } from '@/components/UserAvatar'
-import { ItemImage } from '@/components/ItemImage'
+import { WishlistItemCard } from '@/components/WishlistItemCard'
 import { useFriends } from '@/api/useFriends'
 import { useWishlist } from '@/api/useWishlist'
 
 export function FeedPage() {
-  const { data: friends, isLoading: friendsLoading } = useFriends()
-
-  if (friendsLoading) {
-    return (
-      <Layout>
-        <div className="text-center py-8">Загрузка...</div>
-      </Layout>
-    )
-  }
-
-  if (!friends?.length) {
-    return (
-      <Layout>
-        <div className="text-center py-8">
-          <p className="text-gray-600">У вас пока нет друзей.</p>
-          <p className="text-gray-500 mt-2">
-            Добавьте друзей, чтобы видеть их вишлисты в ленте.
-          </p>
-        </div>
-      </Layout>
-    )
-  }
+  const { data: friends, isLoading: friendsLoading, isError, refetch } = useFriends()
 
   return (
     <Layout>
-      <h1 className="text-2xl font-bold mb-6">Лента друзей</h1>
-      <div className="space-y-8">
-        {friends.map((friend) => (
-          <FriendWishlist key={friend.id} userId={friend.user.id} user={friend.user} />
-        ))}
-      </div>
+      <section className="wh-wishlist">
+        <header className="wh-wishlist-heading">
+          <div><h1 className="wh-page-heading">Лента друзей</h1><p className="wh-muted wh-wishlist-subline">Идеи подарков для близких</p></div>
+          <Link to="/friends" className="wh-button wh-button--quiet">Друзья</Link>
+        </header>
+        {friendsLoading ? (
+          <div className="wh-wishlist-state" role="status"><p>Загрузка...</p></div>
+        ) : isError ? (
+          <div className="wh-wishlist-state"><p role="alert">Не удалось загрузить друзей.</p><button type="button" className="wh-button wh-button--quiet" onClick={() => void refetch()}>Повторить</button></div>
+        ) : !friends?.length ? (
+          <div className="wh-wishlist-state">
+            <h2>У вас пока нет друзей.</h2>
+            <p className="wh-muted">Добавьте друзей, чтобы видеть их вишлисты в ленте.</p>
+            <Link to="/friends" className="wh-button wh-button--quiet">Найти друзей</Link>
+          </div>
+        ) : (
+          <div className="wh-friends-feed">{friends.map((friend) => <FriendWishlist key={friend.id} userId={friend.user.id} user={friend.user} />)}</div>
+        )}
+      </section>
     </Layout>
   )
 }
 
 function FriendWishlist({ userId, user }: { userId: string; user: { username: string; displayName: string; avatarUrl?: string } }) {
-  const { data: wishlist, isLoading } = useWishlist(userId)
-
-  if (isLoading) return null
-  if (!wishlist?.items.length || wishlist.hidden) return null
-
-  const hasMore = wishlist.items.length > 4
+  const { data: wishlist, isLoading, isError, refetch } = useWishlist(userId)
+  if (wishlist?.hidden) return null
 
   return (
-    <div className="bg-white rounded-lg shadow p-6">
-      <div className="flex items-center justify-between mb-4">
-        <Link
-          to={`/profile/${user.username}`}
-          className="flex items-center hover:opacity-80"
-        >
+    <section className="wh-friend-shelf">
+      <header className="wh-wishlist-section-heading">
+        <Link to={`/profile/${user.username}`} className="wh-person-link">
           <UserAvatar displayName={user.displayName} avatarUrl={user.avatarUrl} size="md" />
-          <div className="ml-3">
-            <p className="font-semibold">{user.displayName}</p>
-            <p className="text-sm text-gray-500">@{user.username}</p>
-          </div>
+          <div><h2>{user.displayName}</h2><p className="wh-muted">@{user.username}</p></div>
         </Link>
-        {hasMore && (
-          <Link
-            to={`/wishlist/${user.username}`}
-            className="text-sm text-blue-600 hover:text-blue-700"
-          >
-            Весь вишлист →
-          </Link>
-        )}
-      </div>
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {wishlist.items.slice(0, 4).map((item) => (
-          <Link
-            key={item.id}
-            to={`/wishlist/${user.username}`}
-            className="border rounded-lg overflow-hidden block hover:shadow-md transition-shadow"
-          >
-            <ItemImage imageUrl={item.imageUrl} name={item.name} className="w-full h-32 object-cover" />
-            <div className="p-2">
-              <p className="text-sm font-medium truncate">{item.name}</p>
-              <p className="text-sm text-gray-600">
-                {item.price === null ? 'Цена не указана' : `${item.price} ${item.currency}`}
-              </p>
-              <p className="text-xs text-gray-500 truncate">{formatItemSource(item.source, item.url)}</p>
-            </div>
-          </Link>
-        ))}
-      </div>
-    </div>
+        {!!wishlist && wishlist.items.length > 4 && <Link to={`/wishlist/${user.username}`} className="wh-button wh-button--quiet">Весь вишлист</Link>}
+      </header>
+      {isLoading ? (
+        <div className="wh-wishlist-state" role="status"><p>Загрузка...</p></div>
+      ) : isError ? (
+        <div className="wh-wishlist-state"><p role="alert">Не удалось загрузить вишлист.</p><button type="button" className="wh-button wh-button--quiet" onClick={() => void refetch()}>Повторить</button></div>
+      ) : wishlist?.items.length === 0 ? (
+        <div className="wh-wishlist-state"><p>Вишлист пока пуст</p></div>
+      ) : (
+        <div className="wh-wishlist-grid wh-wishlist-grid--compact">
+          {wishlist?.items.slice(0, 4).map((item) => <WishlistItemCard key={item.id} item={item} isOwner={false} wishlistPath={`/wishlist/${user.username}`} />)}
+        </div>
+      )}
+    </section>
   )
 }
