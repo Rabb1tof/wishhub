@@ -23,7 +23,7 @@ using WishHub.Tests.Infrastructure;
 namespace WishHub.Tests.Api;
 
 // Real HTTP routing/model binding/authentication over TestServer, with only the wishlist stack.
-// Program startup independently requires the production PostgreSQL/Hangfire integration.
+// Program startup independently requires the production PostgreSQL integration.
 public class WishlistControllerTests : IAsyncLifetime
 {
     private readonly WishlistTestStore _store = new();
@@ -35,6 +35,7 @@ public class WishlistControllerTests : IAsyncLifetime
             .ConfigureServices(services =>
             {
                 services.AddDbContext<AppDbContext>(options => options.UseSqlite(_store.Connection));
+                services.AddSingleton<IWishlistImageStorage>(_store.Images);
                 services.AddScoped<IWishlistService, WishlistService>();
                 services.AddAuthentication("Test").AddScheme<AuthenticationSchemeOptions, TestAuthenticationHandler>("Test", _ => { });
                 services.AddAuthorization();

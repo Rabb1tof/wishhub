@@ -8,7 +8,7 @@ using WishHub.Infrastructure.Data;
 
 namespace WishHub.Infrastructure.Services;
 
-public class WishlistService(AppDbContext dbContext) : IWishlistService
+public class WishlistService(AppDbContext dbContext, IWishlistImageStorage imageStorage) : IWishlistService
 {
     public async Task<WishlistItemDto> AddItemAsync(Guid ownerId, AddWishlistItemRequest request, CancellationToken ct = default)
     {
@@ -20,6 +20,7 @@ public class WishlistService(AppDbContext dbContext) : IWishlistService
             OwnerId = ownerId,
             CreatedAt = DateTime.UtcNow
         };
+        ValidateImageReference(ownerId, request.ImageUrl);
         ApplyValues(item, request);
         await EnsureUniqueUrlAsync(ownerId, item.Url, null, ct);
 
@@ -48,6 +49,7 @@ public class WishlistService(AppDbContext dbContext) : IWishlistService
         Validator.ValidateObject(request, new ValidationContext(request), validateAllProperties: true);
         var url = WishlistValues.NormalizeUrl(request.Url);
         await EnsureUniqueUrlAsync(ownerId, url, itemId, ct);
+        ValidateImageReference(ownerId, request.ImageUrl);
         ApplyValues(item, request);
         if (request.SortOrder.HasValue)
             item.SortOrder = request.SortOrder.Value;
@@ -152,12 +154,21 @@ public class WishlistService(AppDbContext dbContext) : IWishlistService
             throw new InvalidOperationException("URL already exists in wishlist.");
     }
 
+    private void ValidateImageReference(Guid ownerId, string? imageUrl)
+    {
+        if (imageUrl is null)
+            return;
+        var normalized = WishlistValues.NormalizeImageUrl(imageUrl);
+        if (ManagedWishlistImage.TryParse(normalized, out var image) &&
+            (image.OwnerId != ownerId || !imageStorage.Exists(image)))
+            throw new ValidationException("Managed image must belong to you and exist in storage.");
+    }
     private static void ApplyValues(WishlistItem item, AddWishlistItemRequest request)
     {
         Validator.ValidateObject(request, new ValidationContext(request), validateAllProperties: true);
         item.Url = WishlistValues.NormalizeUrl(request.Url);
         item.Name = WishlistValues.NormalizeName(request.Name);
-        item.ImageUrl = request.ImageUrl is null ? null : WishlistValues.NormalizeUrl(request.ImageUrl);
+        item.ImageUrl = request.ImageUrl is null ? null : WishlistValues.NormalizeImageUrl(request.ImageUrl);
         item.Price = request.Price;
         item.Currency = WishlistValues.NormalizeCurrency(request.Currency);
         item.Source = WishlistValues.GetSource(item.Url);

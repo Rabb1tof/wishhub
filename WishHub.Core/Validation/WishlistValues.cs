@@ -32,6 +32,50 @@ public static class WishlistValues
         return normalized;
     }
 
+    public static bool TryNormalizeImageUrl(string? value, out string normalized)
+    {
+        normalized = value?.Trim() ?? string.Empty;
+        if (ManagedWishlistImage.TryParse(normalized, out var image))
+        {
+            normalized = image.Url;
+            return true;
+        }
+        if (!TryNormalizeUrl(normalized, out normalized))
+            return false;
+
+        // Managed files must have one reference form for ownership checks and orphan cleanup.
+        var path = new Uri(normalized).AbsolutePath;
+        while (true)
+        {
+            var decoded = Uri.UnescapeDataString(path);
+            if (decoded == path)
+                break;
+            path = decoded;
+        }
+        var segments = new List<string>();
+        foreach (var segment in path.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (segment == ".")
+                continue;
+            if (segment == "..")
+            {
+                if (segments.Count > 0)
+                    segments.RemoveAt(segments.Count - 1);
+                continue;
+            }
+            segments.Add(segment);
+        }
+        return segments.Count < 2 || !segments[0].Equals("api", StringComparison.OrdinalIgnoreCase) ||
+            !segments[1].Equals("wishlist-images", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static string NormalizeImageUrl(string value)
+    {
+        if (!TryNormalizeImageUrl(value, out var normalized))
+            throw new ValidationException("Image URL must be HTTP(S) or a canonical relative managed image path.");
+        return normalized;
+    }
+
     public static string NormalizeName(string? value)
     {
         var name = value?.Trim();
@@ -68,4 +112,11 @@ public sealed class HttpUrlAttribute : ValidationAttribute
 {
     public override bool IsValid(object? value) =>
         value is null || value is string url && WishlistValues.TryNormalizeUrl(url, out _);
+}
+
+[AttributeUsage(AttributeTargets.Property)]
+public sealed class WishlistImageUrlAttribute : ValidationAttribute
+{
+    public override bool IsValid(object? value) =>
+        value is null || value is string url && WishlistValues.TryNormalizeImageUrl(url, out _);
 }
