@@ -95,11 +95,39 @@ describe('SignalR session lifecycle', () => {
     expect(connection.url).toBe('/hubs/chat')
     expect(await connection.tokenFactory?.()).toBe('access-a')
     const sessionVersion = useAuthStore.getState().sessionVersion
-    await act(async () => { useAuthStore.setState({ accessToken: 'access-refreshed' }) })
+    await act(async () => {
+      expect(useAuthStore.getState().refreshAuth({
+        user: userA, accessToken: 'access-refreshed', refreshToken: 'refresh-next', expiresAt: '2030-01-01T01:00:00Z',
+      }, sessionVersion)).toBe(true)
+    })
     expect(useAuthStore.getState().sessionVersion).toBe(sessionVersion)
     expect(await connection.tokenFactory?.()).toBe('access-refreshed')
     expect(transport.connections).toHaveLength(1)
     expect(connection.stop).not.toHaveBeenCalled()
+  })
+
+  it('starts a fresh connection after terminal close when the current session refreshes', async () => {
+    login()
+    mount()
+    const previous = transport.connections[0]
+    await act(async () => { previous.finishStart() })
+    const sessionVersion = useAuthStore.getState().sessionVersion
+    act(() => { previous.state = 'Disconnected'; previous.close() })
+    expect(transport.connections).toHaveLength(1)
+    await act(async () => {
+      expect(useAuthStore.getState().refreshAuth({
+        user: userA, accessToken: 'access-refreshed', refreshToken: 'refresh-next', expiresAt: '2030-01-01T01:00:00Z',
+      }, sessionVersion)).toBe(true)
+    })
+    expect(useAuthStore.getState().sessionVersion).toBe(sessionVersion)
+    expect(transport.connections).toHaveLength(2)
+    const current = transport.connections[1]
+    await act(async () => { current.finishStart() })
+    previous.close()
+    expect(current.state).toBe('Connected')
+    expect(current.stop).not.toHaveBeenCalled()
+    expect(await current.tokenFactory?.()).toBe('access-refreshed')
+    expect(await previous.tokenFactory?.()).toBe('')
   })
 
   it('stops a pending connection on logout even after the last consumer unmounts', async () => {

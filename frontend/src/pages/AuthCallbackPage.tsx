@@ -68,6 +68,7 @@ function describeError(code: string): string {
     invalid_state: 'Проверка состояния OAuth не пройдена — попробуйте ещё раз',
     user_not_found: 'Пользователь не найден',
     user_create_failed: 'Не удалось создать пользователя',
+    account_link_required: 'Войдите в существующий аккаунт и привяжите VK в настройках',
     completion_expired: 'Сессия входа отсутствует или истекла. Попробуйте войти снова.',
     completion_failed: 'Не удалось завершить вход. Попробуйте войти снова.',
     session_changed: 'Аккаунт уже изменился. Попробуйте войти снова.',

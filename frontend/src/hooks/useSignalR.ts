@@ -101,7 +101,7 @@ function ensureConnection(): void {
 // Logout and account changes must stop delivery even while Layout is unmounted.
 const unsubscribeAuth = useAuthStore.subscribe((auth, previous) => {
   if (auth.sessionVersion !== previous.sessionVersion || auth.user?.id !== previous.user?.id
-    || !!auth.accessToken !== !!previous.accessToken) ensureConnection()
+    || auth.accessToken !== previous.accessToken) ensureConnection()
 })
 
 if (import.meta.hot) {
