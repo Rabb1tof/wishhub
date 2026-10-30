@@ -24,7 +24,12 @@ export function AuthCallbackPage() {
         setCompletionError('session_changed')
         return
       }
-      useAuthStore.getState().setAuth(session)
+      try {
+        useAuthStore.getState().setAuth(session)
+      } catch {
+        setCompletionError('session_storage_failed')
+        return
+      }
       navigate('/', { replace: true })
     }, (error: unknown) => {
       if (!active) return
@@ -72,6 +77,7 @@ function describeError(code: string): string {
     completion_expired: 'Сессия входа отсутствует или истекла. Попробуйте войти снова.',
     completion_failed: 'Не удалось завершить вход. Попробуйте войти снова.',
     session_changed: 'Аккаунт уже изменился. Попробуйте войти снова.',
+    session_storage_failed: 'Не удалось сохранить вход. Проверьте доступ к хранилищу браузера и войдите снова.',
   }
   return map[code] ?? code
 }

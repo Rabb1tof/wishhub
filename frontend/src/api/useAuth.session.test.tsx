@@ -1,7 +1,7 @@
 import { act, cleanup, renderHook, render, screen, fireEvent } from '@testing-library/react'
 import { useQueryClient } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { AxiosError } from 'axios'
+import axios, { AxiosError } from 'axios'
 import { stopConnection } from '@/hooks/useSignalR'
 import type { AxiosAdapter, InternalAxiosRequestConfig } from 'axios'
 import api from './client'
@@ -20,9 +20,28 @@ const auth = (id: string) => ({ user: { id, username: id, displayName: id }, acc
 const response = (config: InternalAxiosRequestConfig, data: unknown) => ({config, data, status:200, statusText:'OK', headers:{}})
 const deferred = <T,>() => { let resolve!: (value:T) => void; const promise = new Promise<T>(r => { resolve=r }); return {promise,resolve} }
 const originalAdapter=api.defaults.adapter
+const originalRawAdapter=axios.defaults.adapter
 let adapter:ReturnType<typeof vi.fn<AxiosAdapter>>
-beforeEach(()=>{useAuthStore.getState().setAuth(auth('A')); adapter=vi.fn<AxiosAdapter>(async c=>response(c,{})); api.defaults.adapter=adapter})
-afterEach(()=>{cleanup();useAuthStore.getState().clearAuth();api.defaults.adapter=originalAdapter})
+let locksDescriptor:PropertyDescriptor|undefined
+beforeEach(()=>{
+  locksDescriptor=Object.getOwnPropertyDescriptor(navigator,'locks')
+  Object.defineProperty(navigator,'locks',{configurable:true,value:{
+    request:(_name:string,_options:LockOptions,callback:()=>Promise<void>)=>callback(),
+  }})
+  useAuthStore.getState().setAuth(auth('A'))
+  vi.mocked(stopConnection).mockClear()
+  adapter=vi.fn<AxiosAdapter>(async c=>response(c,{}))
+  api.defaults.adapter=adapter
+  axios.defaults.adapter=adapter
+})
+afterEach(()=>{
+  cleanup()
+  useAuthStore.getState().clearAuth()
+  api.defaults.adapter=originalAdapter
+  axios.defaults.adapter=originalRawAdapter
+  if(locksDescriptor)Object.defineProperty(navigator,'locks',locksDescriptor)
+  else Reflect.deleteProperty(navigator,'locks')
+})
 
 describe('session changes and mutations',()=>{
   it.each([{name:'account switch',next:auth('B')},{name:'logout',next:null},{name:'same-account login',next:auth('A')}])('clears private cached data and cancels old queries on $name',async({next})=>{
@@ -113,14 +132,51 @@ describe('session changes and mutations',()=>{
     expect(useAuthStore.getState()).toMatchObject({user:{id:'B'},accessToken:'access-B',refreshToken:'refresh-B'})
   })
 
-  it('allows explicit local logout when the access token is already expired',async()=>{
-    vi.mocked(stopConnection).mockClear()
+  it('refreshes an expired access token once before completing server logout',async()=>{
+    adapter.mockImplementation(async config=>{
+      if(config.url==='/api/auth/refresh')return response(config,{...auth('A'),accessToken:'renewed-A',refreshToken:'rotated-A'})
+      if(config.url==='/auth/logout' && config.headers.get('Authorization')==='Bearer renewed-A')return {...response(config,null),status:204}
+      throw new AxiosError('Expired','ERR_BAD_REQUEST',config,undefined,{...response(config,{}),status:401})
+    })
+    const {result}=renderHook(()=>useLogout(),{wrapper:QueryProvider})
+    await act(async()=>{await expect(result.current.mutateAsync()).resolves.toBeUndefined()})
+    expect(adapter.mock.calls.map(([config])=>config.url)).toEqual(['/auth/logout','/api/auth/refresh','/auth/logout'])
+    expect(adapter.mock.calls.filter(([config])=>config.url==='/auth/logout').map(([config])=>config.headers.get('Authorization'))).toEqual(['Bearer access-A','Bearer renewed-A'])
+    expect(JSON.parse(adapter.mock.calls[1][0].data)).toEqual({refreshToken:'refresh-A'})
+    expect(useAuthStore.getState()).toMatchObject({user:null,accessToken:null,refreshToken:null})
+    expect(stopConnection).toHaveBeenCalledTimes(1)
+  })
+
+  it('completes local logout after rejected refresh without rewriting the login pointer',async()=>{
+    const {sessionId,sessionVersion}=useAuthStore.getState()
+    const base=localStorage.getItem('wishhub-auth')
     adapter.mockImplementation(async config=>{throw new AxiosError('Expired','ERR_BAD_REQUEST',config,undefined,{...response(config,{}),status:401})})
     const {result}=renderHook(()=>useLogout(),{wrapper:QueryProvider})
     await act(async()=>{await expect(result.current.mutateAsync()).resolves.toBeUndefined()})
-    expect(useAuthStore.getState()).toMatchObject({user:null,accessToken:null,refreshToken:null})
-    expect(stopConnection).toHaveBeenCalledTimes(1)
-    expect(adapter.mock.calls.map(([config])=>config.url)).toEqual(['/auth/logout'])
+    expect(useAuthStore.getState()).toMatchObject({user:null,accessToken:null,refreshToken:null,sessionVersion:sessionVersion+1})
+    expect(adapter.mock.calls.map(([config])=>config.url)).toEqual(['/auth/logout','/api/auth/refresh'])
+    expect(localStorage.getItem('wishhub-auth')).toBe(base)
+    expect(JSON.parse(localStorage.getItem(`wishhub-auth:tokens:${sessionId}`)!)).toMatchObject({sessionId,userId:'A',expired:true})
+    expect(stopConnection).not.toHaveBeenCalled()
+  })
+
+  it('does not stop or clear a newer login when the older logout refresh is rejected',async()=>{
+    const ready=deferred<void>();const late=deferred<void>()
+    adapter.mockImplementation(async config=>{
+      if(config.url==='/api/auth/refresh'){ready.resolve();await late.promise}
+      throw new AxiosError('Expired','ERR_BAD_REQUEST',config,undefined,{...response(config,{}),status:401})
+    })
+    const {result}=renderHook(()=>useLogout(),{wrapper:QueryProvider})
+    let pending!:Promise<unknown>
+    act(()=>{pending=result.current.mutateAsync().catch(error=>error)})
+    await ready.promise
+    act(()=>useAuthStore.getState().setAuth(auth('B')))
+    const base=localStorage.getItem('wishhub-auth')
+    await act(async()=>{late.resolve();expect(await pending).toMatchObject({code:'ERR_CANCELED'})})
+    expect(useAuthStore.getState()).toMatchObject({user:{id:'B'},accessToken:'access-B',refreshToken:'refresh-B'})
+    expect(localStorage.getItem('wishhub-auth')).toBe(base)
+    expect(adapter.mock.calls.map(([config])=>config.url)).toEqual(['/auth/logout','/api/auth/refresh'])
+    expect(stopConnection).not.toHaveBeenCalled()
   })
 
   it('does not clear a newer session while the previous logout is stopping its connection',async()=>{

@@ -9,6 +9,10 @@ import { useAuthStore } from '@/store/auth'
 import { QueryProvider } from '@/providers/QueryProvider'
 import type { AuthResponse } from '@/types/auth'
 import { AuthCallbackPage } from './AuthCallbackPage'
+import App from '@/App'
+
+vi.mock('@/hooks/useSignalR', () => ({ useSignalR: vi.fn(), stopConnection: vi.fn() }))
+vi.mock('@/utils/notifications', () => ({ requestNotificationPermission: vi.fn() }))
 
 const completedSession: AuthResponse = {
   user: { id: 'completed-user', username: 'completed', displayName: 'Completed user' },
@@ -23,8 +27,8 @@ const otherSession: AuthResponse = {
   refreshToken: 'current-refresh',
 }
 
-function response(data: AuthResponse) {
-  return { data, status: 200, statusText: 'OK', headers: {}, config: {} } as AxiosResponse<AuthResponse>
+function response<T>(data: T) {
+  return { data, status: 200, statusText: 'OK', headers: {}, config: {} } as AxiosResponse<T>
 }
 
 function deferred<T>() {
@@ -56,6 +60,12 @@ function mount(entry = '/auth/callback') {
 beforeEach(() => {
   useAuthStore.getState().clearAuth()
   vi.spyOn(api, 'post').mockResolvedValue(response(completedSession))
+  vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === '/users/me') return response(completedSession.user)
+    if (url === '/friends') return response([])
+    if (url === '/messages/unread/count') return response(0)
+    throw new Error(`Unexpected request: ${url}`)
+  })
   // The retired implementation must never make a network request during a RED run.
   vi.spyOn(axios, 'get').mockRejectedValue(new Error('Legacy profile request is not supported'))
   vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -136,4 +146,41 @@ describe('OAuth cookie completion', () => {
     expect(useAuthStore.getState().user).toBeNull()
     expect(api.post).toHaveBeenCalledExactlyOnceWith('/auth/complete', undefined, { headers: { 'X-WishHub-OAuth': '1' } })
   })
+  it.each([
+    { name: 'anonymous session', initial: null },
+    { name: 'existing session', initial: otherSession },
+  ])('leaves loading and preserves the $name when a completed handoff cannot be saved', async ({ initial }) => {
+    if (initial) useAuthStore.getState().setAuth(initial)
+    const starting = useAuthStore.getState()
+    const saved = localStorage.getItem('wishhub-auth')
+    const setItem = Storage.prototype.setItem
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
+      if (key === 'wishhub-auth') throw new DOMException('Storage write denied', 'SecurityError')
+      setItem.call(this, key, value)
+    })
+    mount()
+    expect((await screen.findByRole('alert')).textContent).toBe('Не удалось сохранить вход. Проверьте доступ к хранилищу браузера и войдите снова.')
+    expect(screen.queryByText('Входим…')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Вернуться ко входу' })).toBeDefined()
+    expect(screen.getByTestId('location').textContent).toBe('/auth/callback')
+    expect(useAuthStore.getState()).toBe(starting)
+    expect(localStorage.getItem('wishhub-auth')).toBe(saved)
+    expect(api.post).toHaveBeenCalledExactlyOnceWith('/auth/complete', undefined, { headers: { 'X-WishHub-OAuth': '1' } })
+  })
+
+  it('completes once through App while the session version changes and navigates home', async () => {
+    const startingVersion = useAuthStore.getState().sessionVersion
+    render(<StrictMode><MemoryRouter initialEntries={['/auth/callback']}>
+      <QueryProvider><App /><Location /></QueryProvider>
+    </MemoryRouter></StrictMode>)
+    await screen.findByRole('heading', { name: 'Лента друзей' })
+    await screen.findByText('У вас пока нет друзей.')
+    expect(screen.getByTestId('location').textContent).toBe('/')
+    expect(useAuthStore.getState().sessionVersion).toBe(startingVersion + 1)
+    expect(useAuthStore.getState().user).toEqual(completedSession.user)
+    expect(api.post).toHaveBeenCalledExactlyOnceWith('/auth/complete', undefined, { headers: { 'X-WishHub-OAuth': '1' } })
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(axios.get).not.toHaveBeenCalled()
+  })
+
 })
