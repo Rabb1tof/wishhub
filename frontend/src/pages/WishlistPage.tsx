@@ -52,7 +52,7 @@ export function WishlistPage() {
             {wishlist?.items.map((item) => <WishlistItemCard key={item.id} item={item} isOwner={isOwnWishlist} onEdit={() => setEditing(item)} />)}
           </div>
         )}
-      {isOwnWishlist && editing && <WishlistItemModal item={editing === 'new' ? undefined : editing} onClose={() => setEditing(null)} />}
+      {isOwnWishlist && editing && <WishlistItemModal key={editing === 'new' ? 'new' : editing.id} item={editing === 'new' ? undefined : editing} onClose={() => setEditing(null)} />}
     </Layout>
   )
 }

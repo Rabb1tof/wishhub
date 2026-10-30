@@ -5,6 +5,8 @@ import { AxiosError } from 'axios'
 import type { AxiosAdapter, InternalAxiosRequestConfig } from 'axios'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import api from '@/api/client'
+import * as metadata from '@/api/metadata'
+import type { MetadataResult } from '@/types/metadata'
 import { useAuthStore } from '@/store/auth'
 import type { WishlistItem } from '@/types/wishlist'
 import { WishlistPage } from './WishlistPage'
@@ -124,4 +126,98 @@ describe('WishlistPage', () => {
     expect(await screen.findByRole('heading', { name: 'Flat gift' })).toBeTruthy()
     expect(adapter.mock.calls.filter(([config]) => config.url?.startsWith('/wishlist')).map(([config]) => config.url)).toEqual(['/wishlist/user/owner-1'])
   })
+})
+
+it.each([
+  { Name: 'another existing item', target: 'other' },
+  { Name: 'a new item', target: 'new' },
+])('resets the draft and aborts old metadata when switching to $Name', async ({ target }) => {
+  const other: WishlistItem = {
+    ...item, id: 'item-2', url: 'https://other.example/gift?variant=green', name: 'Second gift',
+    imageUrl: null, price: 12.5, currency: 'EUR',
+  }
+  client.setQueryData(['wishlist', 'me'], { items: [item, other], hidden: false })
+  client.setQueryDefaults(['wishlist'], { staleTime: Infinity })
+  let completeMetadata!: (value: MetadataResult) => void
+  const waitingMetadata = new Promise<MetadataResult>((resolve) => { completeMetadata = resolve })
+  const resolveMetadata = vi.spyOn(metadata, 'resolveMetadata').mockReturnValue(waitingMetadata)
+  const normalAdapter = adapter.getMockImplementation()!
+  adapter.mockImplementation(async (config) => {
+    if (config.method === 'put' || config.method === 'post') return response(config, other)
+    return normalAdapter(config)
+  })
+  renderPage()
+  fireEvent.click(screen.getAllByRole('button', { name: 'Редактировать' })[0])
+  fireEvent.change(screen.getByLabelText('Название'), { target: { value: 'Unsaved draft from first item' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Получить данные' }))
+  const oldSignal = resolveMetadata.mock.calls[0][1]
+  const nextButton = target === 'other'
+    ? screen.getAllByRole('button', { name: 'Редактировать' })[1]
+    : screen.getByRole('button', { name: 'Добавить' })
+  nextButton.focus()
+  expect(document.activeElement).toBe(nextButton)
+  fireEvent.click(nextButton)
+
+  const values = () => ({
+    url: (screen.getByLabelText('Ссылка на товар') as HTMLInputElement).value,
+    name: (screen.getByLabelText('Название') as HTMLInputElement).value,
+    imageUrl: (screen.getByLabelText('Фото: URL (необязательно)') as HTMLInputElement).value,
+    price: (screen.getByLabelText('Цена (необязательно)') as HTMLInputElement).value,
+    currency: (screen.getByLabelText('Валюта') as HTMLInputElement).value,
+  })
+  const expected = target === 'other'
+    ? { url: 'https://other.example/gift?variant=green', name: 'Second gift', imageUrl: '', price: '12.5', currency: 'EUR' }
+    : { url: '', name: '', imageUrl: '', price: '', currency: 'RUB' }
+  expect(values()).toEqual(expected)
+  expect(oldSignal.aborted).toBe(true)
+  expect(screen.queryByRole('button', { name: 'Получение данных...' })).toBeNull()
+  await act(async () => completeMetadata({ status: 'ok', name: 'Late first item', imageUrl: 'https://images.example/first.jpg', source: 'shop.example', reason: null }))
+  expect(values()).toEqual(expected)
+  expect(screen.queryByRole('button', { name: 'Применить найденное' })).toBeNull()
+  if (target === 'new') {
+    fireEvent.change(screen.getByLabelText('Ссылка на товар'), { target: { value: 'https://new.example/gift' } })
+    fireEvent.change(screen.getByLabelText('Название'), { target: { value: 'New gift' } })
+  }
+  fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  const writes = adapter.mock.calls.map(([config]) => config).filter((config) => config.method === 'put' || config.method === 'post')
+  expect(writes).toHaveLength(1)
+  expect(writes[0]).toMatchObject(target === 'other' ? { method: 'put', url: '/wishlist/item-2' } : { method: 'post', url: '/wishlist' })
+  expect(JSON.parse(writes[0].data)).toEqual(target === 'other'
+    ? { url: 'https://other.example/gift?variant=green', name: 'Second gift', imageUrl: null, price: 12.5, currency: 'EUR' }
+    : { url: 'https://new.example/gift', name: 'New gift', imageUrl: null, price: null, currency: 'RUB' })
+  expect(resolveMetadata).toHaveBeenCalledTimes(1)
+})
+
+it.each([
+  { Name: 'another editor', reopenFirst: false },
+  { Name: 'a reopened editor for the same item', reopenFirst: true },
+])('keeps $Name open when a previous save finishes', async ({ reopenFirst }) => {
+  const other = { ...item, id: 'item-2', name: 'Second gift', url: 'https://other.example/gift' }
+  client.setQueryData(['wishlist', 'me'], { items: [item, other], hidden: false })
+  client.setQueryDefaults(['wishlist'], { staleTime: Infinity })
+  let completeSave!: () => void
+  const waitingSave = new Promise<void>((resolve) => { completeSave = resolve })
+  const normalAdapter = adapter.getMockImplementation()!
+  adapter.mockImplementation(async (config) => {
+    if (config.method === 'put') {
+      await waitingSave
+      return response(config, item)
+    }
+    return normalAdapter(config)
+  })
+  renderPage()
+  fireEvent.click(screen.getAllByRole('button', { name: 'Редактировать' })[0])
+  fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
+  await waitFor(() => expect(adapter.mock.calls.some(([config]) => config.method === 'put')).toBe(true))
+  fireEvent.click(screen.getAllByRole('button', { name: 'Редактировать' })[1])
+  if (reopenFirst) fireEvent.click(screen.getAllByRole('button', { name: 'Редактировать' })[0])
+  fireEvent.change(screen.getByLabelText('Название'), { target: { value: 'New unsaved draft' } })
+  await act(async () => { completeSave() })
+  expect((screen.getByLabelText('Название') as HTMLInputElement).value).toBe('New unsaved draft')
+  expect((screen.getByLabelText('Ссылка на товар') as HTMLInputElement).value).toBe(reopenFirst ? item.url : 'https://other.example/gift')
+  const writes = adapter.mock.calls.map(([config]) => config).filter((config) => config.method === 'put')
+  expect(writes).toHaveLength(1)
+  expect(writes[0].url).toBe('/wishlist/item-1')
+  expect(JSON.parse(writes[0].data).name).toBe('Flat gift')
 })
