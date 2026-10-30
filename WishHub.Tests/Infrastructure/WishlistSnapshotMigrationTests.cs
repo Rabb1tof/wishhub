@@ -45,7 +45,7 @@ public class WishlistSnapshotMigrationTests
         Assert.All(operations.OfType<AddColumnOperation>(), operation => Assert.True(operations.IndexOf(operation) < backfillPosition));
         Assert.Contains("\"ImageUrl\" = p.\"ImageUrl\"", backfill.Sql);
         Assert.Contains("\"Price\" = p.\"Price\"", backfill.Sql);
-        Assert.Contains("COALESCE(NULLIF(btrim(w.\"CustomName\"), '')", backfill.Sql);
+        Assert.Contains("COALESCE(NULLIF(btrim(w.\"CustomName\", U&'", backfill.Sql);
         Assert.Contains("'загрузка...'", backfill.Sql);
         Assert.Contains("'Товар с '", backfill.Sql);
         Assert.DoesNotContain("DELETE", backfill.Sql, StringComparison.OrdinalIgnoreCase);
@@ -79,10 +79,30 @@ public class WishlistSnapshotMigrationTests
         Assert.Contains("LOCK TABLE \"WishlistItems\", \"Products\" IN SHARE ROW EXCLUSIVE MODE", guard.Sql);
         Assert.Contains("RAISE EXCEPTION", guard.Sql);
         Assert.Contains("SET \"CustomName\" = w.\"Name\"", guard.Sql);
-        Assert.Contains("w.\"Name\" IS DISTINCT FROM COALESCE(NULLIF(btrim(w.\"CustomName\"), '')", guard.Sql);
+        Assert.Contains("w.\"Name\" IS DISTINCT FROM COALESCE(NULLIF(btrim(w.\"CustomName\", U&'", guard.Sql);
         Assert.Equal(new[] { "Url", "Name", "ImageUrl", "Price", "Currency", "Source" },
             operations.OfType<DropColumnOperation>().Select(operation => operation.Name));
         Assert.Empty(operations.OfType<DropTableOperation>());
+    }
+
+    [Fact]
+    public void Scripts_EveryTrim_UsesExactDotNetWhitespaceSet()
+    {
+        var expected = Enumerable.Range(0, char.MaxValue + 1).Select(value => (char)value).Where(char.IsWhiteSpace).ToArray();
+        Assert.Equal(25, expected.Length);
+        var migration = new AddWishlistItemSnapshots();
+        foreach (var sql in migration.UpOperations.Concat(migration.DownOperations).OfType<SqlOperation>().Select(operation => operation.Sql))
+        {
+            var trims = System.Text.RegularExpressions.Regex.Matches(sql, """btrim\([^,]+,\s*U&'(?<characters>[^']+)'\)""");
+            Assert.NotEmpty(trims);
+            Assert.Equal(System.Text.RegularExpressions.Regex.Matches(sql, @"\bbtrim\(").Count, trims.Count);
+            foreach (System.Text.RegularExpressions.Match trim in trims)
+            {
+                var characters = System.Text.RegularExpressions.Regex.Matches(trim.Groups["characters"].Value, @"\\([0-9A-Fa-f]{4})")
+                    .Select(match => (char)Convert.ToInt32(match.Groups[1].Value, 16)).ToArray();
+                Assert.Equal(expected, characters);
+            }
+        }
     }
 
     [Fact]

@@ -37,13 +37,13 @@ public class WishlistService(AppDbContext dbContext) : IWishlistService
 
     public async Task<WishlistItemDto?> UpdateItemAsync(Guid ownerId, Guid itemId, UpdateWishlistItemRequest request, CancellationToken ct = default)
     {
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(ct);
+        await LockOwnerAsync(ownerId, ct);
         var item = await dbContext.WishlistItems
             .FirstOrDefaultAsync(w => w.Id == itemId && w.OwnerId == ownerId, ct);
         if (item == null)
             return null;
 
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(ct);
-        await LockOwnerAsync(ownerId, ct);
         // Validate before touching tracked state, including duplicate conflicts.
         Validator.ValidateObject(request, new ValidationContext(request), validateAllProperties: true);
         var url = WishlistValues.NormalizeUrl(request.Url);
