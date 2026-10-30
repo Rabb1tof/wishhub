@@ -41,6 +41,32 @@ public sealed class WishlistImageStorageTests : IDisposable
         Assert.False(_storage.Exists(image with { OwnerId = Guid.NewGuid() }));
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(40)]
+    [InlineData(8192)]
+    public async Task Upload_JpegFillBeforeFirstSegment_PreservesExactImage(int fillCount)
+    {
+        var original = ImageBytes("jpg", 80);
+        var bytes = new byte[original.Length + fillCount];
+        original.AsSpan(0, 2).CopyTo(bytes);
+        bytes.AsSpan(2, fillCount).Fill(0xFF);
+        original.AsSpan(2).CopyTo(bytes.AsSpan(2 + fillCount));
+        using var input = new ObservedStream(bytes, chunkSize: 7);
+
+        var url = await _storage.UploadAsync(_owner, input, "image/jpeg", NoReferences);
+
+        Assert.True(ManagedWishlistImage.TryParse(url, out var image));
+        Assert.Equal("jpg", image.Extension);
+        await using var read = _storage.OpenRead(image);
+        Assert.NotNull(read);
+        using var actual = new MemoryStream();
+        await read.CopyToAsync(actual);
+        Assert.Equal(bytes, actual.ToArray());
+        Assert.Single(Directory.GetFiles(OwnerPath));
+        Assert.True(input.CanRead);
+    }
+
     [Fact]
     public async Task Upload_FragmentedHeader_RecognizesSignatureAcrossReads()
     {
@@ -316,7 +342,7 @@ public sealed class WishlistImageStorageTests : IDisposable
     {
         var original = Convert.FromBase64String(extension switch
         {
-            "jpg" => "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k=",
+            "jpg" => "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAAIAAgDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD50ooor8MP9Uz/2Q==",
             "png" => "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a7nwAAAAASUVORK5CYII=",
             "webp" => "UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA",
             _ => throw new ArgumentOutOfRangeException(nameof(extension))
