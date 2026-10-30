@@ -25,11 +25,18 @@ export function WishlistItemModal({ item, onClose }: { item?: WishlistItem; onCl
   const [message, setMessage] = useState('')
   const [found, setFound] = useState<Found | null>(null)
   const request = useRef<AbortController | null>(null)
+  const mounted = useRef(true)
   const addItem = useAddItem()
   const updateItem = useUpdateItem()
   const saving = addItem.isPending || updateItem.isPending
 
-  useEffect(() => () => request.current?.abort(), [])
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      request.current?.abort()
+    }
+  }, [])
 
   const validUrl = draft.url.trim().length <= 2000 && isHttpUrl(draft.url)
   const validName = !!draft.name.trim() && draft.name.trim().length <= 500
@@ -134,7 +141,7 @@ export function WishlistItemModal({ item, onClose }: { item?: WishlistItem; onCl
     try {
       if (item) await updateItem.mutateAsync({ id: item.id, data })
       else await addItem.mutateAsync(data)
-      onClose()
+      if (mounted.current) onClose()
     } catch (err) {
       const response = isAxiosError<{ error?: string; message?: string; detail?: string }>(err) ? err.response : undefined
       setError(response?.status === 409 ? 'Товар с такой ссылкой уже есть в вашем вишлисте.'
