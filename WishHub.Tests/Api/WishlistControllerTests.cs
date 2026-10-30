@@ -273,7 +273,7 @@ public class WishlistControllerTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task PublicWishlist_AnonymousRead_ReturnsCardsWithoutReserverIdentity()
+    public async Task PublicWishlist_AnonymousRead_HidesReservationState()
     {
         var (owner, ownerUser) = await AuthenticatedAsync();
         var (reserver, _) = await AuthenticatedAsync();
@@ -287,7 +287,7 @@ public class WishlistControllerTests : IAsyncLifetime
         var shared = Assert.Single((await response.Content.ReadFromJsonAsync<WishlistItemDto[]>())!);
         Assert.Equal(card.Id, shared.Id);
         Assert.Equal("Shared card", shared.Name);
-        Assert.True(shared.IsReserved);
+        Assert.False(shared.IsReserved);
         Assert.False(shared.IsReservedByMe);
         Assert.Null(shared.ReservedBy);
     }

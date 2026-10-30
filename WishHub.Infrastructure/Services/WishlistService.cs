@@ -179,7 +179,7 @@ public class WishlistService(AppDbContext dbContext, IWishlistImageStorage image
             Price = item.Price,
             Currency = item.Currency,
             Source = item.Source.ToString(),
-            IsReserved = !isOwner && item.IsReserved,
+            IsReserved = viewerId.HasValue && !isOwner && item.IsReserved,
             IsReservedByMe = reservedByMe,
             SortOrder = item.SortOrder,
             CreatedAt = item.CreatedAt,
