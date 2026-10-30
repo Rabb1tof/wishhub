@@ -1,4 +1,4 @@
-import { act, cleanup, renderHook } from '@testing-library/react'
+import { act, cleanup, renderHook, render, screen, fireEvent } from '@testing-library/react'
 import { useQueryClient } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AxiosError } from 'axios'
@@ -8,6 +8,8 @@ import api from './client'
 import { useLogin, useRegister, useLogout } from './useAuth'
 import { useTelegramLogin } from './useOAuth'
 import { useChangePassword, useUploadAvatar } from './useProfile'
+import { MemoryRouter } from 'react-router-dom'
+import App from '@/App'
 import { QueryProvider } from '@/providers/QueryProvider'
 import { useAuthStore } from '@/store/auth'
 import { useNotificationStore } from '@/store/notifications'
@@ -131,6 +133,65 @@ describe('session changes and mutations',()=>{
     act(()=>useAuthStore.getState().setAuth(auth('B')))
     await act(async()=>{stopped.resolve();expect(await pending).toMatchObject({code:'ERR_CANCELED'})})
     expect(useAuthStore.getState()).toMatchObject({user:{id:'B'},accessToken:'access-B',refreshToken:'refresh-B'})
+  })
+
+  it.each([{name:'logout',next:null},{name:'account switch',next:auth('B')}])('clears cache and cancels work when storage reports peer $name',async({next})=>{
+    const {result}=renderHook(()=>useQueryClient(),{wrapper:QueryProvider})
+    const client=result.current
+    client.setQueryData(['dialogs'], ['private-A'])
+    const ready=deferred<InternalAxiosRequestConfig>();const late=deferred<void>()
+    adapter.mockImplementation(async config=>{ready.resolve(config);await late.promise;return response(config,'old-A')})
+    const pending=api.get('/messages/dialogs').catch(error=>error)
+    const request=await ready.promise
+    const version=useAuthStore.getState().sessionVersion
+    if(next)localStorage.setItem('wishhub-auth',JSON.stringify({state:{...next,sessionId:'peer-B-session'},version:0}))
+    else localStorage.removeItem('wishhub-auth')
+    act(()=>window.dispatchEvent(new StorageEvent('storage',{key:'wishhub-auth',storageArea:localStorage})))
+    const cancelled=request.signal?.aborted
+    await act(async()=>{late.resolve();expect(await pending).toMatchObject({code:'ERR_CANCELED'})})
+    expect(cancelled).toBe(true)
+    expect(client.getQueryData(['dialogs'])).toBeUndefined()
+    expect(useAuthStore.getState().sessionVersion).toBe(version+1)
+    expect(useAuthStore.getState().user?.id??null).toBe(next?.user.id??null)
+  })
+
+  it('adopts a peer rotation without clearing cache or changing the local session version',async()=>{
+    const {result}=renderHook(()=>useQueryClient(),{wrapper:QueryProvider})
+    result.current.setQueryData(['dialogs'],['private-A'])
+    const {sessionId,sessionVersion}=useAuthStore.getState()
+    const key=`wishhub-auth:tokens:${sessionId}`
+    localStorage.setItem(key,JSON.stringify({sessionId,userId:'A',accessToken:'peer-rotated-access',refreshToken:'peer-rotated-refresh'}))
+    act(()=>window.dispatchEvent(new StorageEvent('storage',{key,storageArea:localStorage})))
+    expect(useAuthStore.getState()).toMatchObject({sessionId,sessionVersion,accessToken:'peer-rotated-access',refreshToken:'peer-rotated-refresh'})
+    expect(result.current.getQueryData(['dialogs'])).toEqual(['private-A'])
+    await api.get('/users/me')
+    expect(adapter.mock.calls[0][0].headers.get('Authorization')).toBe('Bearer peer-rotated-access')
+  })
+
+  it('replaces already visible private data and drafts after a peer account switch',async()=>{
+    const peer={id:'peer',username:'peer',displayName:'Peer'}
+    adapter.mockImplementation(async config=>{
+      const ownerId=config.headers.get('Authorization')==='Bearer access-A'?'A':'B'
+      if(config.url==='/messages/dialogs')return response(config,[{user:peer,lastMessage:null,unreadCount:0}])
+      if(config.url==='/messages/peer' && config.method==='get')return response(config,[{id:'message',senderId:ownerId,receiverId:'peer',content:`${ownerId}-only message`,isRead:true,createdAt:'2026-10-30'}])
+      if(config.url==='/messages/unread/count')return response(config,0)
+      if(config.url==='/users/me')return response(config,{...auth(ownerId).user,wishlistPrivacy:'public',wishlistItemCount:0})
+      if(config.url==='/friends')return response(config,[])
+      if(config.url?.endsWith('/read-all'))return response(config,null)
+      throw new Error(`Unexpected request: ${config.url}`)
+    })
+    const originalScroll=Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView=vi.fn()
+    render(<MemoryRouter initialEntries={['/messages?user=peer']}><QueryProvider><App/></QueryProvider></MemoryRouter>)
+    await screen.findByText('A-only message')
+    fireEvent.change(screen.getByLabelText('Текст сообщения'),{target:{value:'A private draft'}})
+    localStorage.setItem('wishhub-auth',JSON.stringify({state:{...auth('B'),sessionId:'peer-B-session'},version:0}))
+    act(()=>window.dispatchEvent(new StorageEvent('storage',{key:'wishhub-auth',storageArea:localStorage})))
+    await screen.findByText('B-only message')
+    expect(screen.queryByText('A-only message')).toBeNull()
+    expect((screen.getByLabelText('Текст сообщения') as HTMLInputElement).value).toBe('')
+    expect(adapter.mock.calls.filter(([config])=>config.url==='/messages/peer').at(-1)?.[0].headers.get('Authorization')).toBe('Bearer access-B')
+    Element.prototype.scrollIntoView=originalScroll
   })
 
 })
