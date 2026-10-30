@@ -86,8 +86,7 @@ export function useCancelReservation() {
 
   return useMutation({
     mutationFn: async (id: string) => {
-      const res = await api.post<WishlistItem>(`/wishlist/${id}/cancel-reservation`)
-      return res.data
+      await api.post<void>(`/wishlist/${id}/cancel-reservation`)
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [WISHLIST_KEY] })

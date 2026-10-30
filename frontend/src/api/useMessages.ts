@@ -72,9 +72,10 @@ export function useMarkDialogAsRead() {
   })
 }
 
-export function useUnreadCount() {
+export function useUnreadCount(enabled = true) {
   return useQuery({
     queryKey: [MESSAGES_KEY, 'unread'],
+    enabled,
     queryFn: async () => {
       const res = await api.get<number>('/messages/unread/count')
       return res.data

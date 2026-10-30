@@ -103,7 +103,9 @@ describe('managed image API', () => {
     const config = adapter.mock.calls[0][0]
     expect(config).toMatchObject({ method: 'post', baseURL: '/api', url: '/wishlist-images' })
     expect(config.headers.get('Authorization')).toBe('Bearer image-token')
-    expect(config.signal).toBe(controller.signal)
+    expect(config.signal?.aborted).toBe(false)
+    controller.abort()
+    expect(config.signal?.aborted).toBe(true)
     expect(config.data).toBeInstanceOf(FormData)
     expect((config.data as FormData).get('file')).toBe(file)
     expect(Array.from((config.data as FormData).keys())).toEqual(['file'])
@@ -127,7 +129,9 @@ describe('managed image API', () => {
     const config = adapter.mock.calls[0][0]
     expect(config).toMatchObject({ method: 'get', baseURL: '/api', url: path.slice(4), responseType: 'blob' })
     expect(config.headers.get('Authorization')).toBe('Bearer image-token')
-    expect(config.signal).toBe(controller.signal)
+    expect(config.signal?.aborted).toBe(false)
+    controller.abort()
+    expect(config.signal?.aborted).toBe(true)
   })
 
   it.each([

@@ -1,73 +1,83 @@
-import axios, { AxiosError } from 'axios'
-import type { AxiosRequestConfig } from 'axios'
+import axios, { AxiosError, CanceledError } from 'axios'
+import type { InternalAxiosRequestConfig } from 'axios'
 import { useAuthStore, mapAuthResponseFromApi } from '@/store/auth'
-import type { AuthResponseRaw } from '@/types/auth'
+import type { AuthResponse, AuthResponseRaw } from '@/types/auth'
 
-const api = axios.create({
-  baseURL: '/api',
-  withCredentials: false,
+interface SessionRequest extends InternalAxiosRequestConfig {
+  sessionVersion?: number
+  retried?: boolean
+}
+
+const sessionEndpoints = new Set(['/auth/login', '/auth/register', '/auth/telegram', '/auth/refresh', '/auth/complete', '/auth/logout'])
+
+const api = axios.create({ baseURL: '/api', withCredentials: false })
+let sessionController = new AbortController()
+let refreshing: { version: number; promise: Promise<void> } | null = null
+
+useAuthStore.subscribe((current, previous) => {
+  if (current.sessionVersion === previous.sessionVersion && current.user?.id === previous.user?.id) return
+  const previousController = sessionController
+  sessionController = new AbortController()
+  refreshing = null
+  previousController.abort()
 })
 
-api.interceptors.request.use((config) => {
-  const token = useAuthStore.getState().accessToken
-  if (token) {
-    config.headers = config.headers ?? {}
-    config.headers.Authorization = `Bearer ${token}`
-  }
+function requireCurrentSession(config: SessionRequest) {
+  if (config.sessionVersion !== useAuthStore.getState().sessionVersion) throw new CanceledError('Session changed')
+}
+
+api.interceptors.request.use((config: SessionRequest) => {
+  const auth = useAuthStore.getState()
+  config.sessionVersion ??= auth.sessionVersion
+  requireCurrentSession(config)
+  config.signal = config.signal
+    ? AbortSignal.any([config.signal as AbortSignal, sessionController.signal])
+    : sessionController.signal
+  if (auth.accessToken) config.headers.set('Authorization', `Bearer ${auth.accessToken}`)
+  else config.headers.delete('Authorization')
   return config
-})
+}, (error: unknown) => { throw error }, { synchronous: true })
 
-let isRefreshing = false
-let failedQueue: { resolve: (value: AxiosRequestConfig | PromiseLike<AxiosRequestConfig>) => void; reject: (error: unknown) => void }[] = []
-
-const processQueue = (error: unknown, token?: string) => {
-  failedQueue.forEach(({ resolve, reject }) => {
-    if (error) {
-      reject(error)
-    } else {
-      resolve({ headers: { Authorization: `Bearer ${token}` } })
+async function refreshSession(version: number) {
+  const auth = useAuthStore.getState()
+  try {
+    // This request must never enter this instance's 401 interceptor.
+    const response = await axios.post<AuthResponseRaw | AuthResponse>('/api/auth/refresh', {
+      refreshToken: auth.refreshToken,
+    }, { signal: sessionController.signal, timeout: 10000 })
+    if (!useAuthStore.getState().refreshAuth(mapAuthResponseFromApi(response.data), version)) {
+      throw new CanceledError('Session changed')
     }
-  })
-  failedQueue = []
+  } catch (error) {
+    if (useAuthStore.getState().sessionVersion !== version) throw new CanceledError('Session changed')
+    useAuthStore.getState().clearAuth()
+    throw error
+  } finally {
+    if (refreshing?.version === version) refreshing = null
+  }
 }
 
 api.interceptors.response.use(
-  (response) => response,
+  response => {
+    requireCurrentSession(response.config as SessionRequest)
+    return response
+  },
   async (error: AxiosError) => {
-    const originalRequest = error.config
-    if (!originalRequest || error.response?.status !== 401) {
+    const request = error.config as SessionRequest | undefined
+    if (!request) return Promise.reject(error)
+    requireCurrentSession(request)
+    const auth = useAuthStore.getState()
+    if (error.response?.status !== 401 || request.retried || sessionEndpoints.has(request.url?.split('?')[0] ?? '') || !auth.refreshToken) {
       return Promise.reject(error)
     }
-
-    const authStore = useAuthStore.getState()
-
-    if (isRefreshing) {
-      return new Promise((resolve, reject) => {
-        failedQueue.push({ resolve, reject })
-      })
-        .then(() => api(originalRequest))
-        .catch((err) => Promise.reject(err))
-    }
-
-    isRefreshing = true
-
-    try {
-      const refreshResponse = await api.post<AuthResponseRaw>('/auth/refresh', {
-        refreshToken: authStore.refreshToken,
-      })
-
-      const mapped = mapAuthResponseFromApi(refreshResponse.data)
-      useAuthStore.getState().setAuth(mapped)
-      processQueue(null, mapped.accessToken)
-      return api(originalRequest)
-    } catch (refreshError) {
-      processQueue(refreshError)
-      useAuthStore.getState().clearAuth()
-      window.location.href = '/login'
-      return Promise.reject(refreshError)
-    } finally {
-      isRefreshing = false
-    }
+    request.retried = true
+    // Another request may already have refreshed this same session.
+    if (request.headers.get('Authorization') !== `Bearer ${auth.accessToken}`) return api(request)
+    const version = auth.sessionVersion
+    refreshing ??= { version, promise: refreshSession(version) }
+    await refreshing.promise
+    requireCurrentSession(request)
+    return api(request)
   },
 )
 

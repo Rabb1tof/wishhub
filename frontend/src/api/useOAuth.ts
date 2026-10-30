@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import api from './client'
+import { CanceledError } from 'axios'
 import { useAuthStore, mapAuthResponseFromApi } from '@/store/auth'
 import type { AuthResponseRaw } from '@/types/auth'
 import type { TelegramAuthData } from '@/components/TelegramLoginButton'
@@ -73,14 +74,14 @@ export function useLinkTelegram() {
 }
 
 export function useTelegramLogin() {
-  const setAuth = useAuthStore((s) => s.setAuth)
   return useMutation({
     mutationFn: async (payload: TelegramAuthData) => {
+      const version = useAuthStore.getState().sessionVersion
       const res = await api.post<AuthResponseRaw>('/auth/telegram', mapTelegramPayload(payload))
-      return mapAuthResponseFromApi(res.data)
-    },
-    onSuccess: (data) => {
-      setAuth(data)
+      if (useAuthStore.getState().sessionVersion !== version) throw new CanceledError('Session changed')
+      const auth = mapAuthResponseFromApi(res.data)
+      useAuthStore.getState().setAuth(auth)
+      return auth
     },
   })
 }

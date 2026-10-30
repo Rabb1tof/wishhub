@@ -1,31 +1,26 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import axios from 'axios'
 import type { AuthResponse, AuthResponseRaw, User } from '@/types/auth'
 
 interface AuthState {
   user: User | null
   accessToken: string | null
   refreshToken: string | null
-  isRefreshing: boolean
+  sessionVersion: number
   setAuth: (payload: AuthResponse) => void
   clearAuth: () => void
-  refreshTokens: () => Promise<AuthResponse | null>
+  refreshAuth: (payload: AuthResponse, expectedVersion: number) => boolean
 }
 
-const mapUser = (raw: AuthResponseRaw['User'] | AuthResponse['user']): User => ({
-  id: (raw as any).Id ?? (raw as any).id,
-  username: (raw as any).Username ?? (raw as any).username,
-  displayName: (raw as any).DisplayName ?? (raw as any).displayName,
-  avatarUrl: (raw as any).AvatarUrl ?? (raw as any).avatarUrl,
-})
-
-const mapAuthResponse = (raw: AuthResponseRaw | AuthResponse): AuthResponse => ({
-  accessToken: (raw as any).AccessToken ?? (raw as any).accessToken,
-  refreshToken: (raw as any).RefreshToken ?? (raw as any).refreshToken,
-  expiresAt: (raw as any).ExpiresAt ?? (raw as any).expiresAt,
-  user: mapUser((raw as any).User ?? (raw as any).user),
-})
+export const mapAuthResponseFromApi = (raw: AuthResponseRaw | AuthResponse): AuthResponse => {
+  if ('accessToken' in raw) return raw
+  return {
+    accessToken: raw.AccessToken,
+    refreshToken: raw.RefreshToken,
+    expiresAt: raw.ExpiresAt,
+    user: { id: raw.User.Id, username: raw.User.Username, displayName: raw.User.DisplayName, avatarUrl: raw.User.AvatarUrl },
+  }
+}
 
 export const useAuthStore = create<AuthState>()(
   persist(
@@ -33,46 +28,24 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       accessToken: null,
       refreshToken: null,
-      isRefreshing: false,
-      setAuth: (payload) => set({
-        user: payload.user,
-        accessToken: payload.accessToken,
-        refreshToken: payload.refreshToken,
-      }),
-      clearAuth: () => set({ user: null, accessToken: null, refreshToken: null }),
-      refreshTokens: async () => {
-        const { refreshToken, isRefreshing } = get()
-        if (!refreshToken || isRefreshing) return null
-
-        set({ isRefreshing: true })
-        try {
-          const response = await axios.post<AuthResponseRaw>('/api/auth/refresh', {
-            refreshToken,
-          })
-          const mapped = mapAuthResponse(response.data)
-          set({
-            user: mapped.user,
-            accessToken: mapped.accessToken,
-            refreshToken: mapped.refreshToken,
-          })
-          return mapped
-        } catch (error) {
-          set({ user: null, accessToken: null, refreshToken: null })
-          return null
-        } finally {
-          set({ isRefreshing: false })
-        }
+      sessionVersion: 0,
+      // A new login is a boundary even when the account id is unchanged.
+      setAuth: ({ user, accessToken, refreshToken }) => set(state => ({
+        user, accessToken, refreshToken, sessionVersion: state.sessionVersion + 1,
+      })),
+      clearAuth: () => set(state => ({
+        user: null, accessToken: null, refreshToken: null, sessionVersion: state.sessionVersion + 1,
+      })),
+      refreshAuth: ({ user, accessToken, refreshToken }, expectedVersion) => {
+        const current = get()
+        if (current.sessionVersion !== expectedVersion || current.user?.id !== user.id) return false
+        set({ accessToken, refreshToken })
+        return true
       },
     }),
     {
       name: 'wishhub-auth',
-      partialize: (state) => ({
-        user: state.user,
-        accessToken: state.accessToken,
-        refreshToken: state.refreshToken,
-      }),
+      partialize: ({ user, accessToken, refreshToken }) => ({ user, accessToken, refreshToken }),
     },
   ),
 )
-
-export const mapAuthResponseFromApi = mapAuthResponse
