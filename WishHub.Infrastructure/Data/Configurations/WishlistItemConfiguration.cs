@@ -9,19 +9,24 @@ public class WishlistItemConfiguration : IEntityTypeConfiguration<WishlistItem>
     public void Configure(EntityTypeBuilder<WishlistItem> builder)
     {
         builder.HasIndex(w => new { w.OwnerId, w.ProductId });
-        
-        builder.Property(w => w.CustomName).HasMaxLength(500);
-        
+
+        // Retained only for a lossless rollback of legacy cards until data cleanup.
+        builder.Property<string?>("CustomName").HasMaxLength(500);
+        builder.Property(w => w.Url).HasMaxLength(2000).IsRequired();
+        builder.Property(w => w.Name).HasMaxLength(500).IsRequired();
+        builder.Property(w => w.ImageUrl).HasMaxLength(2000);
+        builder.Property(w => w.Currency).HasMaxLength(10).IsRequired();
+
         builder.HasOne(w => w.Owner)
             .WithMany(u => u.WishlistItems)
             .HasForeignKey(w => w.OwnerId)
             .OnDelete(DeleteBehavior.Cascade);
-            
+
         builder.HasOne(w => w.Product)
             .WithMany(p => p.WishlistItems)
             .HasForeignKey(w => w.ProductId)
-            .OnDelete(DeleteBehavior.Cascade);
-            
+            .OnDelete(DeleteBehavior.SetNull);
+
         builder.HasOne(w => w.ReservedBy)
             .WithMany()
             .HasForeignKey(w => w.ReservedById)

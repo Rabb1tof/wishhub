@@ -17,11 +17,12 @@ public class NotificationService : INotificationService
         _logger = logger;
     }
 
+    // Legacy reservation notifications remain in storage but must not reveal surprises to owners.
     public async Task<IReadOnlyList<Notification>> GetUnreadNotificationsAsync(Guid userId, int limit = 50, CancellationToken ct = default)
     {
         return await _dbContext.Notifications
             .AsNoTracking()
-            .Where(n => n.UserId == userId && !n.IsRead)
+            .Where(n => n.UserId == userId && !n.IsRead && n.Type != NotificationType.ItemReserved)
             .OrderByDescending(n => n.CreatedAt)
             .Take(limit)
             .ToListAsync(ct);
@@ -30,7 +31,7 @@ public class NotificationService : INotificationService
     public async Task<bool> MarkAsReadAsync(Guid notificationId, Guid userId, CancellationToken ct = default)
     {
         var notification = await _dbContext.Notifications
-            .FirstOrDefaultAsync(n => n.Id == notificationId && n.UserId == userId, ct);
+            .FirstOrDefaultAsync(n => n.Id == notificationId && n.UserId == userId && n.Type != NotificationType.ItemReserved, ct);
 
         if (notification == null)
             return false;
@@ -44,7 +45,7 @@ public class NotificationService : INotificationService
     public async Task<int> MarkAllAsReadAsync(Guid userId, CancellationToken ct = default)
     {
         var notifications = await _dbContext.Notifications
-            .Where(n => n.UserId == userId && !n.IsRead)
+            .Where(n => n.UserId == userId && !n.IsRead && n.Type != NotificationType.ItemReserved)
             .ToListAsync(ct);
 
         foreach (var notification in notifications)
@@ -61,6 +62,6 @@ public class NotificationService : INotificationService
     {
         return await _dbContext.Notifications
             .AsNoTracking()
-            .CountAsync(n => n.UserId == userId && !n.IsRead, ct);
+            .CountAsync(n => n.UserId == userId && !n.IsRead && n.Type != NotificationType.ItemReserved, ct);
     }
 }
