@@ -7,16 +7,19 @@ namespace WishHub.Infrastructure.Migrations;
 /// <summary>Copies shared product data into independent wishlist snapshots without deleting legacy data.</summary>
 public partial class AddWishlistItemSnapshots : Migration
 {
-    private const string NormalizedUrl = """
-        regexp_replace(btrim(p."Url"), '^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]+',
-            lower(substring(btrim(p."Url") from '^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]+')))
+    // Match .NET 9 String.Trim/Char.IsWhiteSpace without relying on the database locale.
+    private const string TrimCharacters = """U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000'""";
+
+    private const string NormalizedUrl = $$"""
+        regexp_replace(btrim(p."Url", {{TrimCharacters}}), '^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]+',
+            lower(substring(btrim(p."Url", {{TrimCharacters}}) from '^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]+')))
         """;
 
-    private const string SnapshotName = """
-        COALESCE(NULLIF(btrim(w."CustomName"), ''),
-            CASE WHEN lower(btrim(p."Name")) NOT IN ('загрузка...', 'загрузка…', 'loading...', 'loading…')
-                THEN NULLIF(btrim(p."Name"), '') END,
-            'Товар с ' || COALESCE(NULLIF(lower(substring(btrim(p."Url") from '^[A-Za-z][A-Za-z0-9+.-]*://([^/?#:]+)')), ''), 'неизвестного сайта'))
+    private const string SnapshotName = $$"""
+        COALESCE(NULLIF(btrim(w."CustomName", {{TrimCharacters}}), ''),
+            CASE WHEN lower(btrim(p."Name", {{TrimCharacters}})) NOT IN ('загрузка...', 'загрузка…', 'loading...', 'loading…')
+                THEN NULLIF(btrim(p."Name", {{TrimCharacters}}), '') END,
+            'Товар с ' || COALESCE(NULLIF(lower(substring(btrim(p."Url", {{TrimCharacters}}) from '^[A-Za-z][A-Za-z0-9+.-]*://([^/?#:]+)')), ''), 'неизвестного сайта'))
         """;
 
     protected override void Up(MigrationBuilder migrationBuilder)
@@ -42,9 +45,9 @@ public partial class AddWishlistItemSnapshots : Migration
             BEGIN
                 SELECT count(*) INTO fallback_names
                 FROM "WishlistItems" w JOIN "Products" p ON p."Id" = w."ProductId"
-                WHERE NULLIF(btrim(w."CustomName"), '') IS NULL
-                  AND (NULLIF(btrim(p."Name"), '') IS NULL
-                       OR lower(btrim(p."Name")) IN ('загрузка...', 'загрузка…', 'loading...', 'loading…'));
+                WHERE NULLIF(btrim(w."CustomName", {{TrimCharacters}}), '') IS NULL
+                  AND (NULLIF(btrim(p."Name", {{TrimCharacters}}), '') IS NULL
+                       OR lower(btrim(p."Name", {{TrimCharacters}})) IN ('загрузка...', 'загрузка…', 'loading...', 'loading…'));
                 RAISE NOTICE 'Wishlist snapshot migration: % names replaced by domain placeholders', fallback_names;
             END $$;
 
@@ -53,7 +56,7 @@ public partial class AddWishlistItemSnapshots : Migration
                 "Name" = {{SnapshotName}},
                 "ImageUrl" = p."ImageUrl",
                 "Price" = p."Price",
-                "Currency" = COALESCE(NULLIF(btrim(p."Currency"), ''), 'RUB'),
+                "Currency" = COALESCE(NULLIF(btrim(p."Currency", {{TrimCharacters}}), ''), 'RUB'),
                 "Source" = p."Source"
             FROM "Products" p
             WHERE p."Id" = w."ProductId";
@@ -106,7 +109,7 @@ public partial class AddWishlistItemSnapshots : Migration
                        OR w."Url" IS DISTINCT FROM {{NormalizedUrl}}
                        OR w."ImageUrl" IS DISTINCT FROM p."ImageUrl"
                        OR w."Price" IS DISTINCT FROM p."Price"
-                       OR w."Currency" IS DISTINCT FROM COALESCE(NULLIF(btrim(p."Currency"), ''), 'RUB')
+                       OR w."Currency" IS DISTINCT FROM COALESCE(NULLIF(btrim(p."Currency", {{TrimCharacters}}), ''), 'RUB')
                        OR w."Source" IS DISTINCT FROM p."Source"
                 ) THEN
                     RAISE EXCEPTION 'Cannot roll back wishlist snapshots: independent cards or edited product fields would be lost. Export the new data and use a reviewed backup/restore procedure.';
