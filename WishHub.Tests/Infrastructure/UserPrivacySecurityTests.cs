@@ -159,6 +159,7 @@ public sealed class UserPrivacySecurityTests
         services.AddDbContext<AppDbContext>(options => options.UseSqlite(store.Connection));
         services.AddIdentityCore<User>().AddEntityFrameworkStores<AppDbContext>();
         services.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
+        services.AddSingleton(new WishHub.Infrastructure.Storage.AvatarStorage(store.ImageRootPath));
         services.AddScoped<UserService>();
         return services.BuildServiceProvider();
     }

@@ -1,3 +1,5 @@
+using System.IdentityModel.Tokens.Jwt;
+using WishHub.Api.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -11,6 +13,7 @@ namespace WishHub.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
 public class AuthController : ControllerBase
 {
     private readonly UserManager<User> _userManager;
@@ -52,7 +55,7 @@ public class AuthController : ControllerBase
         {
             AccessToken = accessToken,
             RefreshToken = refreshToken.Token,
-            ExpiresAt = DateTime.UtcNow.AddMinutes(60),
+            ExpiresAt = new JwtSecurityTokenHandler().ReadJwtToken(accessToken).ValidTo,
             User = new UserDto
             {
                 Id = user.Id,
@@ -64,7 +67,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("login")]
-    public async Task<ActionResult<AuthResponse>> Login(LoginRequest request)
+    public async Task<ActionResult<AuthResponse>> Login(LoginRequest request, CancellationToken ct = default)
     {
         var user = await _userManager.Users
             .FirstOrDefaultAsync(u => u.UserName == request.UsernameOrEmail || u.Email == request.UsernameOrEmail);
@@ -74,6 +77,9 @@ public class AuthController : ControllerBase
             return Unauthorized(new { Error = "Invalid credentials" });
         }
 
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(ct);
+        await LockUserAsync(user.Id, ct);
+        await _dbContext.Entry(user).ReloadAsync(ct);
         var isPasswordValid = await _userManager.CheckPasswordAsync(user, request.Password);
         if (!isPasswordValid)
         {
@@ -84,13 +90,14 @@ public class AuthController : ControllerBase
         var refreshToken = _tokenService.GenerateRefreshToken(user.Id);
 
         _dbContext.RefreshTokens.Add(refreshToken);
-        await _dbContext.SaveChangesAsync();
+        await _dbContext.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
 
         return Ok(new AuthResponse
         {
             AccessToken = accessToken,
             RefreshToken = refreshToken.Token,
-            ExpiresAt = DateTime.UtcNow.AddMinutes(60),
+            ExpiresAt = new JwtSecurityTokenHandler().ReadJwtToken(accessToken).ValidTo,
             User = new UserDto
             {
                 Id = user.Id,
@@ -102,35 +109,65 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("refresh")]
-    public async Task<ActionResult<AuthResponse>> Refresh(RefreshRequest request)
+    public Task<ActionResult<AuthResponse>> Refresh(RefreshRequest request, CancellationToken ct = default) =>
+        RotateAsync(request.RefreshToken, completion: false, ct);
+
+    [HttpPost("complete")]
+    [AllowAnonymous]
+    public Task<ActionResult<AuthResponse>> Complete(
+        [FromHeader(Name = "X-WishHub-OAuth")] string? marker,
+        [FromServices] IConfiguration configuration, CancellationToken ct)
     {
-        var refreshToken = await _dbContext.RefreshTokens
-            .FirstOrDefaultAsync(rt => rt.Token == request.RefreshToken && !rt.IsRevoked && rt.ExpiresAt > DateTime.UtcNow);
+        // The custom header prevents a cross-origin form from consuming this cookie.
+        if (marker != "1")
+            return Task.FromResult<ActionResult<AuthResponse>>(BadRequest(new { Error = "Invalid login completion request" }));
+        var token = Request.Cookies[OAuthCompletion.CookieName];
+        Response.Cookies.Delete(OAuthCompletion.CookieName, OAuthCompletion.CookieOptions(Request, configuration));
+        return string.IsNullOrEmpty(token)
+            ? Task.FromResult<ActionResult<AuthResponse>>(Unauthorized(new { Error = "Login completion expired" }))
+            : RotateAsync(token, completion: true, ct);
+    }
+
+    private async Task<ActionResult<AuthResponse>> RotateAsync(string token, bool completion, CancellationToken ct)
+    {
+        if (token.StartsWith(OAuthCompletion.TokenPrefix, StringComparison.Ordinal) != completion)
+            return Unauthorized(new { Error = "Invalid refresh token" });
+        var refreshToken = await _dbContext.RefreshTokens.AsNoTracking()
+            .FirstOrDefaultAsync(rt => rt.Token == token && !rt.IsRevoked && rt.ExpiresAt > DateTime.UtcNow, ct);
 
         if (refreshToken == null)
         {
             return Unauthorized(new { Error = "Invalid refresh token" });
         }
 
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(ct);
+        await LockUserAsync(refreshToken.UserId, ct);
         var user = await _userManager.FindByIdAsync(refreshToken.UserId.ToString());
         if (user == null)
         {
             return Unauthorized(new { Error = "User not found" });
         }
 
-        refreshToken.IsRevoked = true;
+        // Conditional consumption remains atomic after any wait for the owner lock.
+        var now = DateTime.UtcNow;
+        var consumed = await _dbContext.RefreshTokens.Where(rt => rt.Id == refreshToken.Id &&
+                !rt.IsRevoked && rt.ExpiresAt > now)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(rt => rt.IsRevoked, true), ct);
+        if (consumed != 1)
+            return Unauthorized(new { Error = "Invalid refresh token" });
 
         var newAccessToken = _tokenService.GenerateAccessToken(user);
         var newRefreshToken = _tokenService.GenerateRefreshToken(user.Id);
 
         _dbContext.RefreshTokens.Add(newRefreshToken);
-        await _dbContext.SaveChangesAsync();
+        await _dbContext.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
 
         return Ok(new AuthResponse
         {
             AccessToken = newAccessToken,
             RefreshToken = newRefreshToken.Token,
-            ExpiresAt = DateTime.UtcNow.AddMinutes(60),
+            ExpiresAt = new JwtSecurityTokenHandler().ReadJwtToken(newAccessToken).ValidTo,
             User = new UserDto
             {
                 Id = user.Id,
@@ -143,7 +180,7 @@ public class AuthController : ControllerBase
 
     [Authorize]
     [HttpPost("logout")]
-    public async Task<IActionResult> Logout()
+    public async Task<IActionResult> Logout([FromServices] IConfiguration configuration, CancellationToken ct = default)
     {
         var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         if (userId == null)
@@ -151,16 +188,17 @@ public class AuthController : ControllerBase
             return Unauthorized();
         }
 
-        var refreshTokens = await _dbContext.RefreshTokens
-            .Where(rt => rt.UserId == Guid.Parse(userId) && !rt.IsRevoked)
-            .ToListAsync();
-
-        foreach (var token in refreshTokens)
-        {
-            token.IsRevoked = true;
-        }
-
-        await _dbContext.SaveChangesAsync();
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(ct);
+        await LockUserAsync(Guid.Parse(userId), ct);
+        await _dbContext.RefreshTokens.Where(rt => rt.UserId == Guid.Parse(userId) && !rt.IsRevoked)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(rt => rt.IsRevoked, true), ct);
+        await transaction.CommitAsync(ct);
+        OAuthCompletion.ClearPending(Request, Response, configuration);
         return NoContent();
     }
+
+    private Task LockUserAsync(Guid userId, CancellationToken ct) => _dbContext.Database.IsNpgsql()
+        ? _dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"""SELECT 1 FROM "AspNetUsers" WHERE "Id" = {userId} FOR UPDATE""", ct)
+        : Task.CompletedTask;
 }

@@ -84,12 +84,21 @@ public class UserService : IUserService
 
     public async Task<bool> ChangePasswordAsync(Guid userId, ChangePasswordRequest request, CancellationToken ct = default)
     {
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(ct);
+        if (_dbContext.Database.IsNpgsql())
+            await _dbContext.Database.ExecuteSqlInterpolatedAsync(
+                $"""SELECT 1 FROM "AspNetUsers" WHERE "Id" = {userId} FOR UPDATE""", ct);
         var user = await _userManager.FindByIdAsync(userId.ToString());
         if (user == null)
             return false;
 
         var result = await _userManager.ChangePasswordAsync(user, request.CurrentPassword, request.NewPassword);
-        return result.Succeeded;
+        if (!result.Succeeded)
+            return false;
+        await _dbContext.RefreshTokens.Where(token => token.UserId == userId && !token.IsRevoked)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(token => token.IsRevoked, true), ct);
+        await transaction.CommitAsync(ct);
+        return true;
     }
 
     public async Task<string?> UploadAvatarAsync(Guid userId, Stream fileStream, string contentType, string fileName, CancellationToken ct = default)
