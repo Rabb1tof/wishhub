@@ -166,8 +166,10 @@ public class UserService : IUserService
             ? _dbContext.Friendships
                 .Where(f => (f.RequesterId == viewerId && f.AddresseeId == user.Id) ||
                             (f.AddresseeId == viewerId && f.RequesterId == user.Id))
-                // Conflicting legacy reverse rows: Blocked takes precedence over Accepted and Pending.
-                .OrderByDescending(f => f.Status)
+                // Wishlist access recognizes any Accepted row, including legacy reverse pairs.
+                .OrderByDescending(f => f.Status == FriendshipStatus.Accepted)
+                .ThenByDescending(f => f.Status == FriendshipStatus.Blocked)
+                .ThenByDescending(f => f.Status == FriendshipStatus.Pending)
                 .Select(f => (FriendshipStatus?)f.Status)
                 .FirstOrDefault()
             : null

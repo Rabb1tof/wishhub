@@ -76,10 +76,15 @@ public sealed class UserAndFriendReadTests
         accepted.AvatarUrl = "https://example.test/avatar.png";
         fixture.AddFriendship(accepted, viewer, FriendshipStatus.Accepted, 1);
         fixture.AddFriendship(viewer, accepted, FriendshipStatus.Pending, 2);
-        var blocked = fixture.AddUser("blocked", WishlistPrivacy.FriendsOnly);
-        blocked.Email = "Alpha-blocked@example.test";
-        fixture.AddFriendship(viewer, blocked, FriendshipStatus.Accepted, 3);
-        fixture.AddFriendship(blocked, viewer, FriendshipStatus.Blocked, 4);
+        var legacyFriend = fixture.AddUser("legacy-friend", WishlistPrivacy.FriendsOnly);
+        legacyFriend.Email = "Alpha-legacy@example.test";
+        fixture.AddFriendship(viewer, legacyFriend, FriendshipStatus.Accepted, 3);
+        fixture.AddFriendship(legacyFriend, viewer, FriendshipStatus.Blocked, 4);
+        var blocked = fixture.AddUser("alpha-blocked", WishlistPrivacy.FriendsOnly);
+        fixture.AddFriendship(viewer, blocked, FriendshipStatus.Pending, 8);
+        fixture.AddFriendship(blocked, viewer, FriendshipStatus.Blocked, 9);
+        var unknown = fixture.AddUser("alpha-unknown", WishlistPrivacy.FriendsOnly);
+        fixture.AddFriendship(viewer, unknown, (FriendshipStatus)42, 10);
         var pending = fixture.AddUser("alpha-pending", WishlistPrivacy.FriendsOnly);
         fixture.AddFriendship(viewer, pending, FriendshipStatus.Pending, 5);
         var unrelated = fixture.AddUser("alpha-unrelated", WishlistPrivacy.FriendsOnly);
@@ -91,7 +96,7 @@ public sealed class UserAndFriendReadTests
 
         var profiles = (await fixture.Read(() => fixture.Users.SearchUsersAsync("Alpha", viewer.Id), 1))
             .ToDictionary(profile => profile.Id);
-        Assert.Equal(7, profiles.Count);
+        Assert.Equal(9, profiles.Count);
         Assert.Equal("friend", profiles[accepted.Id].Username);
         Assert.Equal("Alpha friend", profiles[accepted.Id].DisplayName);
         Assert.Equal("A bio", profiles[accepted.Id].Bio);
@@ -100,8 +105,12 @@ public sealed class UserAndFriendReadTests
         Assert.Equal("FriendsOnly", profiles[accepted.Id].WishlistPrivacy);
         Assert.Equal(FriendshipStatus.Accepted, profiles[accepted.Id].FriendshipStatus);
         Assert.Equal(1, profiles[accepted.Id].WishlistItemCount);
+        Assert.Equal(FriendshipStatus.Accepted, profiles[legacyFriend.Id].FriendshipStatus);
+        Assert.Equal(1, profiles[legacyFriend.Id].WishlistItemCount);
         Assert.Equal(FriendshipStatus.Blocked, profiles[blocked.Id].FriendshipStatus);
         Assert.Equal(0, profiles[blocked.Id].WishlistItemCount);
+        Assert.Equal((FriendshipStatus)42, profiles[unknown.Id].FriendshipStatus);
+        Assert.Equal(0, profiles[unknown.Id].WishlistItemCount);
         Assert.Equal(FriendshipStatus.Pending, profiles[pending.Id].FriendshipStatus);
         Assert.Equal(0, profiles[pending.Id].WishlistItemCount);
         Assert.Null(profiles[unrelated.Id].FriendshipStatus);
