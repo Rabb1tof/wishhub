@@ -29,28 +29,21 @@ public class UserService : IUserService
         _avatars = avatars;
     }
 
-    public async Task<UserProfileDto?> GetProfileAsync(string username, Guid? viewerId, CancellationToken ct = default)
+    public Task<UserProfileDto?> GetProfileAsync(string username, Guid? viewerId, CancellationToken ct = default) =>
+        ProjectProfiles(_userManager.Users.Where(u => u.UserName == username), viewerId).FirstOrDefaultAsync(ct);
+
+    public Task<UserProfileDto?> GetProfileByIdAsync(Guid userId, Guid? viewerId, CancellationToken ct = default) =>
+        ProjectProfiles(_userManager.Users.Where(u => u.Id == userId), viewerId).FirstOrDefaultAsync(ct);
+
+    public async Task<IReadOnlyDictionary<Guid, UserProfileDto>> GetProfilesByIdsAsync(
+        IReadOnlyCollection<Guid> userIds, Guid? viewerId, CancellationToken ct = default)
     {
-        var user = await _userManager.Users
-            .AsNoTracking()
-            .FirstOrDefaultAsync(u => u.UserName == username, ct);
+        if (userIds.Count == 0)
+            return new Dictionary<Guid, UserProfileDto>();
 
-        if (user == null)
-            return null;
-
-        return await MapToDtoAsync(user, viewerId, ct);
-    }
-
-    public async Task<UserProfileDto?> GetProfileByIdAsync(Guid userId, Guid? viewerId, CancellationToken ct = default)
-    {
-        var user = await _userManager.Users
-            .AsNoTracking()
-            .FirstOrDefaultAsync(u => u.Id == userId, ct);
-
-        if (user == null)
-            return null;
-
-        return await MapToDtoAsync(user, viewerId, ct);
+        var ids = userIds.ToArray();
+        return await ProjectProfiles(_userManager.Users.Where(u => ids.Contains(u.Id)), viewerId)
+            .ToDictionaryAsync(profile => profile.Id, ct);
     }
 
     public async Task<UserProfileDto?> UpdateProfileAsync(Guid userId, UpdateProfileRequest request, CancellationToken ct = default)
@@ -79,7 +72,7 @@ public class UserService : IUserService
             return null;
         }
 
-        return await MapToDtoAsync(user, userId, ct);
+        return await GetProfileByIdAsync(userId, userId, ct);
     }
 
     public async Task<bool> ChangePasswordAsync(Guid userId, ChangePasswordRequest request, CancellationToken ct = default)
@@ -158,51 +151,29 @@ public class UserService : IUserService
             return Array.Empty<UserProfileDto>();
 
         query = query.ToLower();
-
-        var users = await _userManager.Users
-            .AsNoTracking()
+        var users = _userManager.Users
             .Where(u => u.UserName!.ToLower().Contains(query) ||
                         u.DisplayName.ToLower().Contains(query) ||
                         (u.Email != null && u.Email.ToLower().Contains(query)))
-            .Take(20)
-            .ToListAsync(ct);
+            .Take(20);
 
-        var results = new List<UserProfileDto>();
-        foreach (var user in users)
-        {
-            results.Add(await MapToDtoAsync(user, currentUserId, ct));
-        }
-
-        return results;
+        return await ProjectProfiles(users, currentUserId).ToListAsync(ct);
     }
 
-    private async Task<UserProfileDto> MapToDtoAsync(User user, Guid? viewerId, CancellationToken ct = default)
-    {
-        // Get friendship status
-        FriendshipStatus? friendshipStatus = null;
-        if (viewerId.HasValue && viewerId.Value != user.Id)
-        {
-            var friendship = await _dbContext.Friendships
-                .AsNoTracking()
-                .FirstOrDefaultAsync(f =>
-                    (f.RequesterId == viewerId.Value && f.AddresseeId == user.Id) ||
-                    (f.AddresseeId == viewerId.Value && f.RequesterId == user.Id), ct);
-
-            friendshipStatus = friendship?.Status;
-        }
-
-        // Count wishlist items — скрываем для тех, у кого нет доступа
-        var canViewWishlist = user.WishlistPrivacy == WishlistPrivacy.Public
-            || (viewerId.HasValue && viewerId.Value == user.Id)
-            || (user.WishlistPrivacy == WishlistPrivacy.FriendsOnly && friendshipStatus == FriendshipStatus.Accepted);
-
-        var wishlistCount = canViewWishlist
-            ? await _dbContext.WishlistItems
-                .AsNoTracking()
-                .CountAsync(w => w.OwnerId == user.Id, ct)
-            : 0;
-
-        return new UserProfileDto
+    private IQueryable<UserProfileDto> ProjectProfiles(IQueryable<User> users, Guid? viewerId) =>
+        from user in users.AsNoTracking()
+        let friendshipStatus = viewerId.HasValue && viewerId != user.Id
+            ? _dbContext.Friendships
+                .Where(f => (f.RequesterId == viewerId && f.AddresseeId == user.Id) ||
+                            (f.AddresseeId == viewerId && f.RequesterId == user.Id))
+                // Wishlist access recognizes any Accepted row, including legacy reverse pairs.
+                .OrderByDescending(f => f.Status == FriendshipStatus.Accepted)
+                .ThenByDescending(f => f.Status == FriendshipStatus.Blocked)
+                .ThenByDescending(f => f.Status == FriendshipStatus.Pending)
+                .Select(f => (FriendshipStatus?)f.Status)
+                .FirstOrDefault()
+            : null
+        select new UserProfileDto
         {
             Id = user.Id,
             Username = user.UserName!,
@@ -212,7 +183,9 @@ public class UserService : IUserService
             CreatedAt = user.CreatedAt,
             WishlistPrivacy = user.WishlistPrivacy.ToString(),
             FriendshipStatus = friendshipStatus,
-            WishlistItemCount = wishlistCount
+            WishlistItemCount = user.WishlistPrivacy == WishlistPrivacy.Public || viewerId == user.Id ||
+                (user.WishlistPrivacy == WishlistPrivacy.FriendsOnly && friendshipStatus == FriendshipStatus.Accepted)
+                ? user.WishlistItems.Count
+                : 0
         };
-    }
 }

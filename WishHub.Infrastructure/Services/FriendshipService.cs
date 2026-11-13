@@ -185,62 +185,40 @@ public class FriendshipService : IFriendshipService
             .OrderByDescending(f => f.UpdatedAt)
             .ToListAsync(ct);
 
-        var result = new List<FriendshipDto>();
+        var profiles = await _userService.GetProfilesByIdsAsync(
+            friendships.Select(f => OtherUserId(f, userId)).Distinct().ToArray(), userId, ct);
+        var result = new List<FriendshipDto>(friendships.Count);
         foreach (var friendship in friendships)
         {
-            result.Add(await MapToDtoAsync(friendship, userId, ct));
+            if (profiles.TryGetValue(OtherUserId(friendship, userId), out var profile))
+                result.Add(MapToDto(friendship, profile));
         }
 
         return result;
     }
 
-    public async Task<IReadOnlyList<FriendRequestDto>> GetIncomingRequestsAsync(Guid userId, CancellationToken ct = default)
+    public Task<IReadOnlyList<FriendRequestDto>> GetIncomingRequestsAsync(Guid userId, CancellationToken ct = default) =>
+        GetRequestsAsync(userId, incoming: true, ct);
+
+    public Task<IReadOnlyList<FriendRequestDto>> GetOutgoingRequestsAsync(Guid userId, CancellationToken ct = default) =>
+        GetRequestsAsync(userId, incoming: false, ct);
+
+    private async Task<IReadOnlyList<FriendRequestDto>> GetRequestsAsync(Guid userId, bool incoming, CancellationToken ct)
     {
         var friendships = await _dbContext.Friendships
             .AsNoTracking()
-            .Where(f => f.Status == FriendshipStatus.Pending && f.AddresseeId == userId)
+            .Where(f => f.Status == FriendshipStatus.Pending &&
+                        (incoming ? f.AddresseeId == userId : f.RequesterId == userId))
             .OrderByDescending(f => f.CreatedAt)
             .ToListAsync(ct);
 
-        var result = new List<FriendRequestDto>();
+        var profiles = await _userService.GetProfilesByIdsAsync(
+            friendships.Select(f => OtherUserId(f, userId)).Distinct().ToArray(), userId, ct);
+        var result = new List<FriendRequestDto>(friendships.Count);
         foreach (var friendship in friendships)
         {
-            var fromUser = await _userService.GetProfileByIdAsync(friendship.RequesterId, userId, ct);
-            if (fromUser != null)
-            {
-                result.Add(new FriendRequestDto
-                {
-                    Id = friendship.Id,
-                    From = fromUser,
-                    CreatedAt = friendship.CreatedAt
-                });
-            }
-        }
-
-        return result;
-    }
-
-    public async Task<IReadOnlyList<FriendRequestDto>> GetOutgoingRequestsAsync(Guid userId, CancellationToken ct = default)
-    {
-        var friendships = await _dbContext.Friendships
-            .AsNoTracking()
-            .Where(f => f.Status == FriendshipStatus.Pending && f.RequesterId == userId)
-            .OrderByDescending(f => f.CreatedAt)
-            .ToListAsync(ct);
-
-        var result = new List<FriendRequestDto>();
-        foreach (var friendship in friendships)
-        {
-            var toUser = await _userService.GetProfileByIdAsync(friendship.AddresseeId, userId, ct);
-            if (toUser != null)
-            {
-                result.Add(new FriendRequestDto
-                {
-                    Id = friendship.Id,
-                    From = toUser,
-                    CreatedAt = friendship.CreatedAt
-                });
-            }
+            if (profiles.TryGetValue(OtherUserId(friendship, userId), out var profile))
+                result.Add(new FriendRequestDto { Id = friendship.Id, From = profile, CreatedAt = friendship.CreatedAt });
         }
 
         return result;
@@ -248,15 +226,18 @@ public class FriendshipService : IFriendshipService
 
     private async Task<FriendshipDto> MapToDtoAsync(Friendship friendship, Guid currentUserId, CancellationToken ct = default)
     {
-        var otherUserId = friendship.RequesterId == currentUserId ? friendship.AddresseeId : friendship.RequesterId;
-        var otherUser = await _userService.GetProfileByIdAsync(otherUserId, currentUserId, ct);
-
-        return new FriendshipDto
-        {
-            Id = friendship.Id,
-            User = otherUser!,
-            Status = friendship.Status.ToString(),
-            CreatedAt = friendship.CreatedAt
-        };
+        var otherUser = await _userService.GetProfileByIdAsync(OtherUserId(friendship, currentUserId), currentUserId, ct);
+        return MapToDto(friendship, otherUser!);
     }
+
+    private static Guid OtherUserId(Friendship friendship, Guid userId) =>
+        friendship.RequesterId == userId ? friendship.AddresseeId : friendship.RequesterId;
+
+    private static FriendshipDto MapToDto(Friendship friendship, UserProfileDto otherUser) => new()
+    {
+        Id = friendship.Id,
+        User = otherUser,
+        Status = friendship.Status.ToString(),
+        CreatedAt = friendship.CreatedAt
+    };
 }
