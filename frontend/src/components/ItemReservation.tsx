@@ -26,9 +26,7 @@ export function ItemReservation({ item, isOwner }: { item: WishlistItem; isOwner
         <p className="wh-reservation-status">
           {item.isReservedByMe
             ? 'Зарезервировано вами'
-            : item.reservedBy
-              ? `Зарезервировано: ${item.reservedBy.displayName}`
-              : 'Зарезервировано'}
+            : 'Зарезервировано'}
         </p>
       )}
       {(!item.isReserved || item.isReservedByMe) && (

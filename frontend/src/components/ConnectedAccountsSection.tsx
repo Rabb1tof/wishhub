@@ -87,9 +87,7 @@ export function ConnectedAccountsSection() {
           linked={linkedProviders.has('vk')}
           linkedAt={externalLogins.logins.find((l) => l.provider === 'vk')?.linkedAt}
           canUnlink={canUnlink('vk')}
-          onLink={() => startVk.mutate()}
           onUnlink={() => unlinkProvider.mutate('vk')}
-          isLinking={startVk.isPending}
           isUnlinking={unlinkProvider.isPending}
           actionLink={
             vkAvailable && !linkedProviders.has('vk') ? (
@@ -112,9 +110,7 @@ export function ConnectedAccountsSection() {
           linked={linkedProviders.has('telegram')}
           linkedAt={externalLogins.logins.find((l) => l.provider === 'telegram')?.linkedAt}
           canUnlink={canUnlink('telegram')}
-          isLinking={linkTelegram.isPending}
           isUnlinking={unlinkProvider.isPending}
-          onLink={() => {}}
           onUnlink={() => unlinkProvider.mutate('telegram')}
           actionLink={
             telegramBot && !linkedProviders.has('telegram') ? (
@@ -150,9 +146,7 @@ interface RowProps {
   linked: boolean
   linkedAt?: string
   canUnlink: boolean
-  onLink: () => void
   onUnlink: () => void
-  isLinking: boolean
   isUnlinking: boolean
   actionLink: React.ReactNode
 }

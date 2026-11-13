@@ -104,18 +104,12 @@ describe('ItemReservation', () => {
     expect(adapter).not.toHaveBeenCalled()
   })
 
-  it('shows the nested reserver without offering cancellation for another user', () => {
+  it('shows a reservation by another user without offering cancellation', () => {
     const adapter = mockApi({})
-    mount(<ItemReservation item={{ ...item, isReserved: true, reservedBy: reserver }} isOwner={false} />)
-    expect(screen.getByText('Зарезервировано: Secret reserver').textContent).toBe('Зарезервировано: Secret reserver')
-    expect(screen.queryByRole('button')).toBeNull()
-    expect(adapter).not.toHaveBeenCalled()
-  })
-
-  it('shows a reserved fallback when reserver details are absent', () => {
     mount(<ItemReservation item={{ ...item, isReserved: true }} isOwner={false} />)
     expect(screen.getByText('Зарезервировано').textContent).toBe('Зарезервировано')
     expect(screen.queryByRole('button')).toBeNull()
+    expect(adapter).not.toHaveBeenCalled()
   })
 
   it('cancels only when isReservedByMe is true', async () => {
