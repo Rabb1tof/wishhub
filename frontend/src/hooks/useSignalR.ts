@@ -6,6 +6,7 @@ import type { QueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import type { NavigateFunction } from 'react-router-dom'
 import { useAuthStore } from '@/store/auth'
+import { addLiveMessage, applyReadReceipt, refreshActiveMessages } from '@/api/useMessages'
 import { useNotificationStore } from '@/store/notifications'
 import { showBrowserNotification } from '@/utils/notifications'
 import type { Message } from '@/types/messages'
@@ -19,6 +20,7 @@ interface SessionConnection {
 
 // One connection across route changes, owned by one login session.
 let connection: SessionConnection | null = null
+let lastStartedVersion: number | undefined
 let context: { queryClient: QueryClient; navigate: NavigateFunction } | null = null
 
 function isCurrent(session: SessionConnection): boolean {
@@ -59,21 +61,27 @@ function ensureConnection(): void {
   // Publish before start so logout also owns and stops a pending handshake.
   connection = session
 
-  const invalidateMessages = () => {
-    if (!isCurrent(session)) return
-    void context?.queryClient.invalidateQueries({ queryKey: ['messages'] })
-    void context?.queryClient.invalidateQueries({ queryKey: ['dialogs'] })
-  }
-
   hub.on('ReceiveMessage', (message: Message) => {
-    if (!isCurrent(session)) return
-    invalidateMessages()
+    if (!isCurrent(session) || !context) return
+    const { queryClient } = context
+    void addLiveMessage(queryClient, message.senderId, { ...message, isRead: false }, session.sessionVersion)
+    void queryClient.invalidateQueries({ queryKey: ['dialogs'] })
+    void queryClient.invalidateQueries({ queryKey: ['messages', 'unread'] })
     showBrowserNotification('Новое сообщение', message.content, () => {
       if (isCurrent(session)) void context?.navigate(`/messages?user=${encodeURIComponent(message.senderId)}`)
     })
   })
-  hub.on('MessageSent', invalidateMessages)
-  hub.on('MessageRead', invalidateMessages)
+  hub.on('MessageSent', (message: Message) => {
+    if (!isCurrent(session) || !context) return
+    const { queryClient } = context
+    void addLiveMessage(queryClient, message.receiverId, message, session.sessionVersion)
+    void queryClient.invalidateQueries({ queryKey: ['dialogs'] })
+  })
+  hub.on('MessageRead', ({ readerId, messageIds }: { readerId: string; messageIds: string[] }) => {
+    if (!isCurrent(session) || !context) return
+    void applyReadReceipt(context.queryClient, readerId, messageIds, session.sessionVersion)
+    void context.queryClient.invalidateQueries({ queryKey: ['dialogs'] })
+  })
   hub.on('ReceiveNotification', (notification: Notification) => {
     if (!isCurrent(session)) return
     useNotificationStore.getState().addNotification(notification)
@@ -84,13 +92,24 @@ function ensureConnection(): void {
       showBrowserNotification('Заявка принята', 'Ваша заявка в друзья принята')
     }
   })
+  const recoverMessages = () => {
+    if (!isCurrent(session) || !context) return
+    refreshActiveMessages(context.queryClient, session.sessionVersion)
+    void context.queryClient.invalidateQueries({ queryKey: ['dialogs'] })
+  }
+  hub.onreconnected(recoverMessages)
   hub.onclose(() => {
     if (connection === session) connection = null
   })
 
   void hub.start().then(async () => {
     // A cancelled start may settle after a new session has already connected.
-    if (!isCurrent(session)) await stopHub(hub)
+    if (!isCurrent(session)) {
+      await stopHub(hub)
+      return
+    }
+    if (lastStartedVersion === session.sessionVersion) recoverMessages()
+    lastStartedVersion = session.sessionVersion
   }).catch((error: unknown) => {
     if (!isCurrent(session)) return
     connection = null
@@ -100,6 +119,9 @@ function ensureConnection(): void {
 
 // Logout and account changes must stop delivery even while Layout is unmounted.
 const unsubscribeAuth = useAuthStore.subscribe((auth, previous) => {
+  if (auth.sessionVersion !== previous.sessionVersion || auth.user?.id !== previous.user?.id) {
+    lastStartedVersion = undefined
+  }
   if (auth.sessionVersion !== previous.sessionVersion || auth.user?.id !== previous.user?.id
     || auth.accessToken !== previous.accessToken) ensureConnection()
 })

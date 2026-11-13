@@ -40,8 +40,7 @@ public class ChatHub : Hub
                 message.CreatedAt
             });
 
-            // Confirm to sender
-            await Clients.Caller.SendAsync("MessageSent", message);
+            await Clients.User(senderId.ToString()).SendAsync("MessageSent", message);
 
             _logger.LogInformation("Message sent from {SenderId} to {ReceiverId}", senderId, receiverId);
         }

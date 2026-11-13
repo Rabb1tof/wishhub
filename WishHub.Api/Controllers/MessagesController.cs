@@ -69,6 +69,7 @@ public class MessagesController : ControllerBase
             return NotFound(new { error = "User not found" });
 
         var message = await _messageService.SendMessageAsync(senderId, userId, request.Content);
+        await _hubContext.Clients.User(senderId.ToString()).SendAsync("MessageSent", message);
 
         // Пушим SignalR событие получателю
         await _hubContext.Clients.User(userId.ToString()).SendAsync("ReceiveMessage", new
@@ -104,7 +105,6 @@ public class MessagesController : ControllerBase
     }
 
     [HttpPost("{userId:guid}/read-batch")]
-    [RequestSizeLimit(8192)]
     public async Task<ActionResult<IReadOnlyList<Guid>>> MarkMessagesAsRead(
         Guid userId, MarkMessagesReadRequest request, CancellationToken ct)
     {
