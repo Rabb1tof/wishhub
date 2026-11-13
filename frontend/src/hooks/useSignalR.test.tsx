@@ -24,6 +24,7 @@ const transport = vi.hoisted(() => {
     })
     stop = vi.fn(async () => { this.state = 'Disconnected' })
     on = vi.fn((name: string, handler: (payload: unknown) => void) => { this.handlers.set(name, handler) })
+    onreconnected = vi.fn()
     close: (error?: Error) => void = () => {}
     onclose = vi.fn((handler: (error?: Error) => void) => { this.close = handler })
     emit(name: string, payload: unknown = {}) { this.handlers.get(name)?.(payload) }

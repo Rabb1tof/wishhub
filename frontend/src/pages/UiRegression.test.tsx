@@ -53,7 +53,6 @@ beforeEach(() => {
     if (config.url === '/friends') return response(config, [{ id: 'relationship', user: friend }])
     if (config.url?.startsWith('/friends/requests')) return response(config, [])
     if (config.url?.startsWith('/messages/') && config.method === 'get') return response(config, [])
-    if (config.url?.endsWith('/read-all')) return response(config, null, 204)
     throw new Error(`Unexpected request: ${config.method} ${config.url}`)
   })
   api.defaults.adapter = adapter
@@ -144,7 +143,7 @@ it('keeps recipient drafts isolated while the previous send completes', async ()
   fireEvent.change(input, { target: { value: 'For second only' } })
   await act(async () => { finish() })
   expect(input.value).toBe('For second only')
-  expect(adapter.mock.calls.filter(([c]) => c.method === 'post' && !c.url?.endsWith('/read-all')).map(([c]) => c.url)).toEqual(['/messages/friend'])
+  expect(adapter.mock.calls.filter(([c]) => c.method === 'post').map(([c]) => c.url)).toEqual(['/messages/friend'])
 })
 
 it('removes an accepted friend by user id and refreshes the list', async () => {
