@@ -331,6 +331,8 @@ namespace WishHub.Infrastructure.Migrations
 
                     b.HasIndex("UserId");
 
+                    b.HasIndex("ExpiresAt", "Id");
+
                     b.ToTable("RefreshTokens");
                 });
 

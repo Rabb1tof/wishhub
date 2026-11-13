@@ -43,6 +43,9 @@ services:
       Logging__LogLevel__Default: Information
       Logging__LogLevel__Microsoft.AspNetCore: Warning
       Metadata__EnableOzonWbray: ${METADATA_ENABLE_OZON_WBRAY:-false}
+      ReverseProxy__Enabled: 'true'
+      ReverseProxy__KnownProxies: ${WISHHUB_TRUSTED_PROXY_IPS:-}
+      ReverseProxy__ForwardLimit: ${WISHHUB_PROXY_HOPS:-1}
     volumes:
     - avatars:/app/wwwroot/avatars
     - wishlist_images:/app/App_Data/wishlist-images

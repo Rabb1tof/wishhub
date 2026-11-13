@@ -17,6 +17,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Net.Http.Headers;
 using WishHub.Api.Controllers;
+using WishHub.Api.Extensions;
 using WishHub.Core.DTOs.Auth;
 using WishHub.Core.DTOs.Users;
 using WishHub.Core.Entities;
@@ -33,6 +34,8 @@ public sealed class AuthSessionLifecycleTests : IAsyncLifetime
     private readonly SqliteConnection _connection = new("Data Source=:memory:");
     private IHost _host = null!;
     private HttpClient _client = null!;
+    private Func<Task>? _holdPasswordRequest;
+    private bool _behindUnconfiguredProxy;
 
     public async Task InitializeAsync()
     {
@@ -43,13 +46,21 @@ public sealed class AuthSessionLifecycleTests : IAsyncLifetime
             ["Jwt:Issuer"] = "WishHubTests", ["Jwt:Audience"] = "WishHubTestUsers",
             ["Jwt:AccessTokenExpiryMinutes"] = "7", ["Jwt:RefreshTokenExpiryDays"] = "30",
             ["Frontend:Url"] = "https://wishhub.example",
+            ["ReverseProxy:KnownProxies"] = "192.0.2.10, 192.0.2.11",
+            ["ReverseProxy:ForwardLimit"] = "2",
             ["OAuth:Vk:ClientId"] = "local-test-client", ["OAuth:Vk:ClientSecret"] = "local-test-only-secret",
             ["OAuth:Vk:RedirectUri"] = "https://wishhub.example/api/auth/vk/callback"
         }).Build();
+        if (_behindUnconfiguredProxy)
+        {
+            configuration["ReverseProxy:Enabled"] = "true";
+            configuration["ReverseProxy:KnownProxies"] = "";
+        }
         _host = await new HostBuilder().ConfigureWebHost(web => web.UseTestServer()
             .ConfigureServices(services =>
             {
                 services.AddSingleton<IConfiguration>(configuration);
+                services.AddPasswordRequestLimits(configuration);
                 services.AddDbContext<AppDbContext>(options => options.UseSqlite(_connection));
                 services.AddIdentityCore<User>(options =>
                     {
@@ -69,9 +80,24 @@ public sealed class AuthSessionLifecycleTests : IAsyncLifetime
             })
             .Configure(app =>
             {
+                app.Use(async (context, next) =>
+                {
+                    if (IPAddress.TryParse(context.Request.Headers["X-Test-Peer"], out var peer))
+                        context.Connection.RemoteIpAddress = peer;
+                    await next(context);
+                });
+                if (!string.IsNullOrWhiteSpace(configuration["ReverseProxy:KnownProxies"]))
+                    app.UseForwardedHeaders();
                 app.UseRouting();
                 app.UseAuthentication();
                 app.UseAuthorization();
+                app.UseRateLimiter();
+                app.Use(async (context, next) =>
+                {
+                    if (context.Request.Headers.ContainsKey("X-Test-Hold") && _holdPasswordRequest is { } hold)
+                        await hold();
+                    await next(context);
+                });
                 app.UseEndpoints(endpoints => endpoints.MapControllers());
             })).StartAsync();
         using (var scope = _host.Services.CreateScope())
@@ -242,6 +268,132 @@ public sealed class AuthSessionLifecycleTests : IAsyncLifetime
         Assert.True(Assert.Single(cookies, cookie => cookie.Name == "vk_oauth_state").Expires > DateTimeOffset.UtcNow);
         Assert.True(Assert.Single(cookies, cookie => cookie.Name == "vk_oauth_verifier").Expires > DateTimeOffset.UtcNow);
         Assert.True(Assert.Single(cookies, cookie => cookie.Name == "vk_oauth_link_user").Expires < DateTimeOffset.UtcNow);
+    }
+
+    [Theory]
+    [InlineData("login", 12)]
+    [InlineData("register", 5)]
+    public async Task PasswordEndpoints_RequestsFromSamePeer_AreLimitedWithoutTrustingClientHeader(string endpoint, int limit)
+    {
+        for (var attempt = 0; attempt < limit; attempt++)
+        {
+            using var permitted = await InvalidPasswordRequestAsync(endpoint, "198.51.100.10", $"203.0.113.{attempt + 1}");
+            Assert.Equal(HttpStatusCode.BadRequest, permitted.StatusCode);
+        }
+
+        using var rejected = await InvalidPasswordRequestAsync(endpoint, "198.51.100.10", "203.0.113.250");
+        Assert.Equal(HttpStatusCode.TooManyRequests, rejected.StatusCode);
+        Assert.InRange(rejected.Headers.RetryAfter?.Delta?.TotalSeconds ?? 0, 1, 60);
+        Assert.True(rejected.Headers.CacheControl?.NoStore);
+        using var separateClient = await InvalidPasswordRequestAsync(endpoint, "198.51.100.11", "203.0.113.250");
+        Assert.Equal(HttpStatusCode.BadRequest, separateClient.StatusCode);
+        using var otherEndpoint = await InvalidPasswordRequestAsync(endpoint == "login" ? "register" : "login", "198.51.100.10");
+        Assert.Equal(HttpStatusCode.BadRequest, otherEndpoint.StatusCode);
+    }
+
+    [Fact]
+    public async Task PasswordEndpoints_TwoTrustedProxies_UseClientAddressAndIgnoreEarlierValues()
+    {
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            using var permitted = await InvalidPasswordRequestAsync("register", "192.0.2.10",
+                $"203.0.113.{attempt + 1}, 198.51.100.10, 192.0.2.11");
+            Assert.Equal(HttpStatusCode.BadRequest, permitted.StatusCode);
+        }
+
+        using var rejected = await InvalidPasswordRequestAsync("register", "192.0.2.10",
+            "203.0.113.250, 198.51.100.10, 192.0.2.11");
+        Assert.Equal(HttpStatusCode.TooManyRequests, rejected.StatusCode);
+        using var otherClient = await InvalidPasswordRequestAsync("register", "192.0.2.10",
+            "203.0.113.250, 198.51.100.11, 192.0.2.11");
+        Assert.Equal(HttpStatusCode.BadRequest, otherClient.StatusCode);
+    }
+
+    [Fact]
+    public async Task Registration_Ipv6AddressesInOnePrefix_ShareQuota()
+    {
+        for (var attempt = 1; attempt <= 5; attempt++)
+        {
+            using var permitted = await InvalidPasswordRequestAsync("register", $"2001:db8:1:2::{attempt}");
+            Assert.Equal(HttpStatusCode.BadRequest, permitted.StatusCode);
+        }
+
+        using var rejected = await InvalidPasswordRequestAsync("register", "2001:db8:1:2::6");
+        Assert.Equal(HttpStatusCode.TooManyRequests, rejected.StatusCode);
+        using var otherPrefix = await InvalidPasswordRequestAsync("register", "2001:db8:1:3::1");
+        Assert.Equal(HttpStatusCode.BadRequest, otherPrefix.StatusCode);
+    }
+
+    [Fact]
+    public async Task PasswordEndpoints_EightRequestsInFlight_RejectNextAndReleaseSharedPermit()
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var count = 0;
+        _holdPasswordRequest = async () =>
+        {
+            if (Interlocked.Increment(ref count) == 8)
+                entered.TrySetResult();
+            await release.Task.WaitAsync(deadline.Token);
+        };
+        var inFlight = Enumerable.Range(1, 8).Select(index => InvalidPasswordRequestAsync(
+            index % 2 == 0 ? "login" : "register", $"198.51.100.{index}", hold: true)).ToArray();
+        try
+        {
+            await entered.Task.WaitAsync(deadline.Token);
+            using var rejected = await InvalidPasswordRequestAsync("login", "198.51.100.90").WaitAsync(deadline.Token);
+            Assert.Equal(HttpStatusCode.TooManyRequests, rejected.StatusCode);
+            Assert.Equal(TimeSpan.FromSeconds(1), rejected.Headers.RetryAfter?.Delta);
+            using var unrelated = await _client.GetAsync("/api/auth/providers", deadline.Token);
+            Assert.Equal(HttpStatusCode.OK, unrelated.StatusCode);
+        }
+        finally
+        {
+            release.TrySetResult();
+            foreach (var response in await Task.WhenAll(inFlight))
+            {
+                using (response)
+                    Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            }
+        }
+
+        using var available = await InvalidPasswordRequestAsync("login", "198.51.100.90");
+        Assert.Equal(HttpStatusCode.BadRequest, available.StatusCode);
+    }
+
+    [Fact]
+    public async Task Registration_UnconfiguredProxy_SharesDeploymentQuotaWithoutTrustingForwardedHeaders()
+    {
+        // Recreate this fixture's host with the same SQLite database and without a proxy allowlist.
+        _client.Dispose();
+        await _host.StopAsync();
+        _host.Dispose();
+        _behindUnconfiguredProxy = true;
+        await InitializeAsync();
+        for (var index = 1; index <= 20; index++)
+        {
+            using var permitted = await InvalidPasswordRequestAsync("register", "198.51.100.10", $"203.0.113.{index}");
+            Assert.Equal(HttpStatusCode.BadRequest, permitted.StatusCode);
+        }
+
+        using var rejected = await InvalidPasswordRequestAsync("register", "198.51.100.11", "203.0.113.21");
+        Assert.Equal(HttpStatusCode.TooManyRequests, rejected.StatusCode);
+    }
+
+    private async Task<HttpResponseMessage> InvalidPasswordRequestAsync(string endpoint, string peer, string? forwarded = null,
+        bool hold = false)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/auth/{endpoint}")
+        {
+            Content = JsonContent.Create(new { }),
+        };
+        request.Headers.Add("X-Test-Peer", peer);
+        if (hold)
+            request.Headers.Add("X-Test-Hold", "1");
+        if (forwarded is not null)
+            request.Headers.Add("X-Forwarded-For", forwarded);
+        return await _client.SendAsync(request);
     }
 
     private static void AssertPendingCookiesDeleted(HttpResponseMessage response)

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using WishHub.Api;
 using WishHub.Api.Extensions;
+using WishHub.Api.Authentication;
 using WishHub.Api.Hubs;
 using WishHub.Api.Middleware;
 using WishHub.Core.Interfaces;
@@ -27,6 +28,8 @@ public class Program
         builder.Services.AddScoped<INotificationService, NotificationService>();
 
         builder.Services.AddProductMetadata(builder.Configuration);
+        builder.Services.AddPasswordRequestLimits(builder.Configuration);
+        builder.Services.AddHostedService<RefreshTokenCleanup>();
         builder.Services.AddWishlistImages(builder.Configuration, builder.Environment);
         builder.Services.AddAvatarFiles(builder.Configuration, builder.Environment);
 
@@ -92,6 +95,8 @@ public class Program
         // Configure the HTTP request pipeline
         // CORS должен быть ПЕРВЫМ — обрабатывает preflight до других middleware
         app.UseCors("AllowFrontend");
+        if (!string.IsNullOrWhiteSpace(app.Configuration["ReverseProxy:KnownProxies"]))
+            app.UseForwardedHeaders();
 
         app.UseMiddleware<ExceptionHandlingMiddleware>();
 
