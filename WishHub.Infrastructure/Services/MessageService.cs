@@ -1,7 +1,5 @@
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging;
 using WishHub.Core.DTOs.Messages;
-using WishHub.Core.DTOs.Users;
 using WishHub.Core.Entities;
 using WishHub.Core.Interfaces;
 using WishHub.Infrastructure.Data;
@@ -12,13 +10,11 @@ public class MessageService : IMessageService
 {
     private readonly AppDbContext _dbContext;
     private readonly IUserService _userService;
-    private readonly ILogger<MessageService> _logger;
 
-    public MessageService(AppDbContext dbContext, IUserService userService, ILogger<MessageService> logger)
+    public MessageService(AppDbContext dbContext, IUserService userService)
     {
         _dbContext = dbContext;
         _userService = userService;
-        _logger = logger;
     }
 
     public async Task<MessageDto> SendMessageAsync(Guid senderId, Guid receiverId, string content, CancellationToken ct = default)
@@ -52,58 +48,65 @@ public class MessageService : IMessageService
         return MapToDto(message);
     }
 
-    public async Task<IReadOnlyList<MessageDto>> GetMessagesAsync(Guid userId, Guid otherUserId, int page = 1, int pageSize = 20, CancellationToken ct = default)
+    public async Task<MessagePage?> GetMessagesAsync(Guid userId, Guid otherUserId, int page, int pageSize, Guid? before, CancellationToken ct = default)
     {
-        var messages = await _dbContext.Messages
+        var query = _dbContext.Messages
             .AsNoTracking()
             .Where(m => (m.SenderId == userId && m.ReceiverId == otherUserId) ||
-                        (m.SenderId == otherUserId && m.ReceiverId == userId))
+                        (m.SenderId == otherUserId && m.ReceiverId == userId));
+
+        if (before is { } cursor)
+        {
+            var anchor = await query.Where(m => m.Id == cursor)
+                .Select(m => new { m.CreatedAt, m.Id })
+                .SingleOrDefaultAsync(ct);
+            if (anchor is null)
+                return null;
+
+            query = query.Where(m => m.CreatedAt < anchor.CreatedAt ||
+                (m.CreatedAt == anchor.CreatedAt && m.Id.CompareTo(anchor.Id) < 0));
+        }
+
+        var messages = await query
             .OrderByDescending(m => m.CreatedAt)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
+            .ThenByDescending(m => m.Id)
+            .Skip(before is null ? (page - 1) * pageSize : 0)
+            .Take(pageSize + 1)
             .ToListAsync(ct);
 
-        return messages.Select(MapToDto).Reverse().ToList();
+        var nextBefore = messages.Count > pageSize ? messages[pageSize - 1].Id : (Guid?)null;
+        if (nextBefore.HasValue)
+            messages.RemoveAt(pageSize);
+
+        messages.Reverse();
+        return new MessagePage(messages.Select(MapToDto).ToList(), nextBefore);
     }
 
     public async Task<IReadOnlyList<DialogDto>> GetDialogsAsync(Guid userId, CancellationToken ct = default)
     {
-        // Get all unique conversation partners
-        var partnerIds = await _dbContext.Messages
-            .AsNoTracking()
+        var summaries = await _dbContext.Messages.AsNoTracking()
             .Where(m => m.SenderId == userId || m.ReceiverId == userId)
-            .Select(m => m.SenderId == userId ? m.ReceiverId : m.SenderId)
-            .Distinct()
+            .GroupBy(m => m.SenderId == userId ? m.ReceiverId : m.SenderId)
+            .Select(g => new
+            {
+                PartnerId = g.Key,
+                LastMessage = g.OrderByDescending(m => m.CreatedAt).ThenByDescending(m => m.Id).First(),
+                UnreadCount = g.Count(m => m.ReceiverId == userId && !m.IsRead)
+            })
             .ToListAsync(ct);
 
-        var dialogs = new List<DialogDto>();
-
-        foreach (var partnerId in partnerIds)
-        {
-            var partner = await _userService.GetProfileByIdAsync(partnerId, userId, ct);
-            if (partner == null) continue;
-
-            var lastMessage = await _dbContext.Messages
-                .AsNoTracking()
-                .Where(m => (m.SenderId == userId && m.ReceiverId == partnerId) ||
-                            (m.SenderId == partnerId && m.ReceiverId == userId))
-                .OrderByDescending(m => m.CreatedAt)
-                .FirstOrDefaultAsync(ct);
-
-            var unreadCount = await _dbContext.Messages
-                .AsNoTracking()
-                .CountAsync(m => m.SenderId == partnerId && m.ReceiverId == userId && !m.IsRead, ct);
-
-            dialogs.Add(new DialogDto
+        var profiles = await _userService.GetProfilesByIdsAsync(summaries.Select(d => d.PartnerId).ToArray(), userId, ct);
+        return summaries
+            .Where(d => profiles.ContainsKey(d.PartnerId))
+            .OrderByDescending(d => d.LastMessage.CreatedAt)
+            .ThenByDescending(d => d.LastMessage.Id)
+            .Select(d => new DialogDto
             {
-                User = partner,
-                LastMessage = lastMessage != null ? MapToDto(lastMessage) : null,
-                UnreadCount = unreadCount
-            });
-        }
-
-        // Sort by last message date
-        return dialogs.OrderByDescending(d => d.LastMessage?.CreatedAt ?? DateTime.MinValue).ToList();
+                User = profiles[d.PartnerId],
+                LastMessage = MapToDto(d.LastMessage),
+                UnreadCount = d.UnreadCount
+            })
+            .ToList();
     }
 
     public async Task<bool> MarkAsReadAsync(Guid messageId, Guid userId, CancellationToken ct = default)
@@ -120,19 +123,18 @@ public class MessageService : IMessageService
         return true;
     }
 
-    public async Task<int> MarkDialogAsReadAsync(Guid userId, Guid otherUserId, CancellationToken ct = default)
+    public async Task<(IReadOnlyList<Guid> Accepted, bool Changed)> MarkMessagesAsReadAsync(
+        Guid userId, Guid otherUserId, IReadOnlyCollection<Guid> messageIds, CancellationToken ct = default)
     {
-        var unreadMessages = await _dbContext.Messages
-            .Where(m => m.SenderId == otherUserId && m.ReceiverId == userId && !m.IsRead)
-            .ToListAsync(ct);
+        var matching = _dbContext.Messages.Where(m =>
+            m.SenderId == otherUserId && m.ReceiverId == userId && messageIds.Contains(m.Id));
+        var accepted = await matching.Select(m => m.Id).ToListAsync(ct);
+        if (accepted.Count == 0)
+            return (accepted, false);
 
-        foreach (var message in unreadMessages)
-        {
-            message.IsRead = true;
-        }
-
-        await _dbContext.SaveChangesAsync(ct);
-        return unreadMessages.Count;
+        var changed = await _dbContext.Messages.Where(m => !m.IsRead && accepted.Contains(m.Id))
+            .ExecuteUpdateAsync(setters => setters.SetProperty(m => m.IsRead, true), ct);
+        return (accepted, changed > 0);
     }
 
     public async Task<int> GetUnreadCountAsync(Guid userId, CancellationToken ct = default)
