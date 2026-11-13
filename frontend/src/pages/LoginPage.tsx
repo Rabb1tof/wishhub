@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { isAxiosError } from 'axios'
 import { Link, useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { useLogin } from '@/api/useAuth'
 import { useOAuthProviders, useTelegramLogin } from '@/api/useOAuth'
@@ -86,7 +87,11 @@ export function LoginPage() {
           </div>
 
           {login.isError && (
-            <p className="text-red-500 text-sm">Неверные учетные данные</p>
+            <p role="alert" className="text-red-500 text-sm">
+              {isAxiosError(login.error) && login.error.response?.status === 429
+                ? 'Слишком много попыток входа. Попробуйте позже.'
+                : 'Неверные учетные данные'}
+            </p>
           )}
 
           <button

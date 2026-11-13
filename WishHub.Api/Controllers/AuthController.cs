@@ -3,6 +3,8 @@ using WishHub.Api.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
+using WishHub.Api.Extensions;
 using Microsoft.EntityFrameworkCore;
 using WishHub.Core.DTOs.Auth;
 using WishHub.Core.Entities;
@@ -28,6 +30,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("register")]
+    [EnableRateLimiting(PasswordRequestLimits.Registration)]
     public async Task<ActionResult<AuthResponse>> Register(RegisterRequest request)
     {
         var user = new User
@@ -67,6 +70,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("login")]
+    [EnableRateLimiting(PasswordRequestLimits.Login)]
     public async Task<ActionResult<AuthResponse>> Login(LoginRequest request, CancellationToken ct = default)
     {
         var user = await _userManager.Users
