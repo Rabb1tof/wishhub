@@ -10,4 +10,4 @@
 
 Отдельный prod Compose перенаправляет порт80 на HTTPS443; nginx передаёт SPA в frontend:80, запросы API — в api:5000. Сертификаты должны существовать заранее. Для EasyPanel/Traefik используйте registry Compose: там TLS завершает внешний ingress.
 
-API и frontend обновляются совместно: завершение входа VK использует одноразовый HttpOnly cookie и POST /api/auth/complete. Укажите публичный HTTPS-адрес в Frontend__Url. После смены пароля refresh-сессии отзываются и требуется новый вход; уже выданный access token действует до настроенного срока JWT.
+Обновите API и frontend совместно и перезагрузите открытые вкладки. Новый клиент использует курсор истории и `/api/messages/{userId}/read-batch`. Завершение входа VK использует одноразовый HttpOnly cookie и `POST /api/auth/complete`. Укажите публичный HTTPS-адрес в Frontend__Url. После смены пароля refresh-сессии отзываются и требуется новый вход; уже выданный access token действует до настроенного срока JWT.
