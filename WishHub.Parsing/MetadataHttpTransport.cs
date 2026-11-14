@@ -18,7 +18,7 @@ public static class MetadataHttpTransport
         ConnectCallback = async (context, ct) =>
         {
             var host = context.DnsEndPoint.Host;
-            if (context.DnsEndPoint.Port != 443 || !(host == "wbray.ru" || IsBasketHost(host)))
+            if (context.DnsEndPoint.Port != 443 || !(host is "wbray.ru" or "ozon.ru" || IsBasketHost(host)))
                 throw new HttpRequestException("Metadata host is not allowed.");
 
             var addresses = await Dns.GetHostAddressesAsync(host, ct);

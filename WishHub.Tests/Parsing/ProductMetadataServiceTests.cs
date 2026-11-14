@@ -102,7 +102,9 @@ public sealed class ProductMetadataServiceTests
     [InlineData("private-ip")]
     [InlineData("port")]
     [InlineData("non-http")]
-    [InlineData("ozon-short-link")]
+    [InlineData("ozon-short-invalid-code")]
+    [InlineData("ozon-short-spoof-host")]
+    [InlineData("ozon-short-extra-path")]
     [InlineData("sku-in-query")]
     [InlineData("path-prefix")]
     [InlineData("zero-sku")]
@@ -118,7 +120,9 @@ public sealed class ProductMetadataServiceTests
             "private-ip" => "http://127.0.0.1/product/3437056417/",
             "port" => "https://www.ozon.ru:444/product/3437056417/",
             "non-http" => "file:///product/3437056417/",
-            "ozon-short-link" => "https://ozon.ru/t/opaque",
+            "ozon-short-invalid-code" => "https://ozon.ru/t/ab%2fcd",
+            "ozon-short-spoof-host" => "https://ozon.ru.example.test/t/abc",
+            "ozon-short-extra-path" => "https://ozon.ru/t/abc/product/3437056417/",
             "sku-in-query" => "https://ozon.ru/category/shoes/?sku=3437056417",
             "path-prefix" => "https://ozon.ru/anything/product/3437056417/",
             "zero-sku" => "https://ozon.ru/product/0/",
@@ -136,13 +140,16 @@ public sealed class ProductMetadataServiceTests
         Assert.Empty(handler.Urls);
     }
 
-    [Fact]
-    public async Task ResolveAsync_OzonDisabled_DoesNotContactThirdParty()
+    [Theory]
+    [InlineData("product")]
+    [InlineData("share")]
+    public async Task ResolveAsync_OzonDisabled_DoesNotContactThirdParty(string format)
     {
         using var handler = new Handler((_, _) => throw new Xunit.Sdk.XunitException("Disabled source contacted"));
         using var http = new HttpClient(handler);
         using var service = new ProductMetadataService(http);
-        Assert.Equal(new ProductMetadataDto("unavailable", null, null, "ozon", "source_disabled"), await service.ResolveAsync(OzonUrl));
+        var url = format == "share" ? "https://ozon.ru/t/CaSe123" : OzonUrl;
+        Assert.Equal(new ProductMetadataDto("unavailable", null, null, "ozon", "source_disabled"), await service.ResolveAsync(url));
         Assert.Empty(handler.Urls);
     }
 
@@ -163,6 +170,84 @@ public sealed class ProductMetadataServiceTests
         using var http = new HttpClient(handler);
         using var service = new ProductMetadataService(http, true);
         Assert.Equal(new ProductMetadataDto("ok", "Vacuum cleaner", Photo, "ozon", null), await service.ResolveAsync(OzonUrl));
+        Assert.Single(handler.Urls);
+    }
+
+    [Theory]
+    [InlineData("absolute")]
+    [InlineData("relative")]
+    public async Task ResolveAsync_OzonShare_ReadsOneRedirectAndKeepsProductVariant(string target)
+    {
+        using var handler = new Handler(async (request, ct) =>
+        {
+            if (request.Method == HttpMethod.Get)
+            {
+                Assert.Equal("https://ozon.ru/t/CaSe123", request.RequestUri!.AbsoluteUri);
+                var redirect = new HttpResponseMessage(HttpStatusCode.MovedPermanently)
+                {
+                    Content = new StreamContent(new HangingStream())
+                };
+                redirect.Headers.Location = target == "absolute" ? new Uri(OzonUrl)
+                    : new Uri("/product/robot-3437056417/?sku=3437056417&variant=blue", UriKind.Relative);
+                return redirect;
+            }
+
+            Assert.Equal(HttpMethod.Post, request.Method);
+            Assert.Equal("https://wbray.ru/api/ozon/analyze/", request.RequestUri!.AbsoluteUri);
+            using var json = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+            var expected = target == "absolute" ? OzonUrl : OzonUrl.Replace("www.ozon.ru", "ozon.ru");
+            Assert.Equal(expected, json.RootElement.GetProperty("card").GetString());
+            return Json(OzonCard());
+        });
+        using var http = new HttpClient(handler);
+        using var service = new ProductMetadataService(http, true);
+
+        var result = await service.ResolveAsync("https://www.ozon.ru/t/CaSe123?utm_source=share#ignored");
+
+        Assert.Equal(new ProductMetadataDto("ok", "Vacuum cleaner", Photo, "ozon", null), result);
+        Assert.Equal(2, handler.Urls.Count);
+    }
+
+    [Theory]
+    [InlineData("foreign", "redirect_rejected")]
+    [InlineData("internal", "redirect_rejected")]
+    [InlineData("user-info", "redirect_rejected")]
+    [InlineData("downgrade", "redirect_rejected")]
+    [InlineData("port", "redirect_rejected")]
+    [InlineData("loop", "redirect_rejected")]
+    [InlineData("collection", "redirect_rejected")]
+    [InlineData("no-location", "redirect_rejected")]
+    [InlineData("html", "source_unavailable")]
+    [InlineData("rate-limited", "rate_limited")]
+    public async Task ResolveAsync_OzonShare_RejectsUnsafeOrUnavailableRedirectWithoutFetchingTarget(string kind, string reason)
+    {
+        using var handler = new Handler((request, _) =>
+        {
+            Assert.Equal("https://ozon.ru/t/CaSe123", request.RequestUri!.AbsoluteUri);
+            var response = new HttpResponseMessage(kind switch
+            {
+                "html" => HttpStatusCode.OK,
+                "rate-limited" => HttpStatusCode.TooManyRequests,
+                _ => HttpStatusCode.Found
+            });
+            response.Headers.Location = kind switch
+            {
+                "foreign" => new Uri("https://ozon.ru.example.test/product/3437056417/"),
+                "internal" => new Uri("https://127.0.0.1/product/3437056417/"),
+                "user-info" => new Uri("https://x@ozon.ru/product/3437056417/"),
+                "downgrade" => new Uri("http://ozon.ru/product/3437056417/"),
+                "port" => new Uri("https://ozon.ru:444/product/3437056417/"),
+                "loop" => new Uri("/t/another", UriKind.Relative),
+                "collection" => new Uri("/highlight/deals/", UriKind.Relative),
+                _ => null
+            };
+            return Task.FromResult(response);
+        });
+        using var http = new HttpClient(handler);
+        using var service = new ProductMetadataService(http, true);
+
+        Assert.Equal(new ProductMetadataDto("unavailable", null, null, "ozon", reason),
+            await service.ResolveAsync("https://ozon.ru/t/CaSe123"));
         Assert.Single(handler.Urls);
     }
 

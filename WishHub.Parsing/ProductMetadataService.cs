@@ -18,7 +18,10 @@ public sealed partial class ProductMetadataService(HttpClient http, bool enableO
     public async Task<ProductMetadataDto> ResolveAsync(string url, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        if (!TryProduct(url, out var uri, out var source, out var sku))
+        var isProduct = TryProduct(url, out var uri, out var source, out var sku);
+        // Invalid authorities never reach the source check in TryProduct.
+        var isOzonShare = !isProduct && source == "ozon" && OzonSharePath().IsMatch(uri!.AbsolutePath);
+        if (!isProduct && !isOzonShare)
             return Failure("unsupported", source, "unsupported_url");
         if (source == "ozon" && !enableOzonWbray)
             return Failure("unavailable", source, "source_disabled");
@@ -29,6 +32,8 @@ public sealed partial class ProductMetadataService(HttpClient http, bool enableO
         timeout.CancelAfter(Deadline);
         try
         {
+            if (isOzonShare)
+                (uri, sku) = await ResolveOzonShareAsync(uri!, timeout.Token);
             return source == "wildberries"
                 ? await ResolveWildberriesAsync(sku, timeout.Token)
                 : await ResolveOzonAsync(uri!, sku, timeout.Token);
@@ -110,6 +115,24 @@ public sealed partial class ProductMetadataService(HttpClient http, bool enableO
         var image = Number(Property(card.RootElement, "media"), "photo_count") > 0
             ? baseUrl + "/images/big/1.webp" : null;
         return Result("wildberries", name, image);
+    }
+
+    private async Task<(Uri Product, long Sku)> ResolveOzonShareAsync(Uri share, CancellationToken ct)
+    {
+        // The bare host issues the Share redirect. Keep the case-sensitive code and forward no tracking query.
+        var endpoint = new Uri("https://ozon.ru" + share.AbsolutePath);
+        using var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
+        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (response.StatusCode == HttpStatusCode.TooManyRequests) throw new MetadataException("rate_limited");
+        if (response.StatusCode is not (HttpStatusCode.MovedPermanently or HttpStatusCode.Found or
+            HttpStatusCode.SeeOther or HttpStatusCode.TemporaryRedirect or HttpStatusCode.PermanentRedirect))
+            throw new MetadataException("source_unavailable");
+        var location = response.Headers.Location;
+        // Never fetch Location. Only a product on the exact Ozon origin may be sent to WBRay.
+        if (location is null || !Uri.TryCreate(endpoint, location, out var product) || product.Scheme != Uri.UriSchemeHttps ||
+            !TryProduct(product.AbsoluteUri, out _, out var source, out var sku) || source != "ozon")
+            throw new MetadataException("redirect_rejected");
+        return (product, sku);
     }
 
     private async Task<ProductMetadataDto> ResolveOzonAsync(Uri uri, long sku, CancellationToken ct)
@@ -240,6 +263,8 @@ public sealed partial class ProductMetadataService(HttpClient http, bool enableO
     private static partial Regex WildberriesPath();
     [GeneratedRegex(@"^/product/(?:[a-zA-Z0-9_%-]+-)?([0-9]{1,19})/?$", RegexOptions.CultureInvariant)]
     private static partial Regex OzonPath();
+    [GeneratedRegex(@"^/t/[a-zA-Z0-9]{1,64}/?$", RegexOptions.CultureInvariant)]
+    private static partial Regex OzonSharePath();
 
     [GeneratedRegex(@"^/s3/multimedia(?:-[a-zA-Z0-9_-]+)?/[0-9]+\.(?:jpg|jpeg|png|webp)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex OzonPhotoPath();
