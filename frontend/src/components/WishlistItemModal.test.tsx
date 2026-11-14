@@ -268,6 +268,26 @@ describe('WishlistItemModal Market suggestion', () => {
   const shortUrl = 'https://market.yandex.ru/cc/9rsgau'
   const resultFromMarket = { ...result, source: 'yandexMarket' }
 
+  it.each([
+    { label: 'no matching variant', status: 'unavailable', reason: 'missing_fields', url: shortUrl, expected: 'Для этой модели и варианта пока нет подсказки' },
+    { label: 'unresolved short link', status: 'unavailable', reason: 'redirect_rejected', url: shortUrl, expected: 'Попробуйте вставить полную ссылку на товар' },
+    { label: 'unsupported address', status: 'unsupported', reason: 'unsupported_url', url: 'https://market.yandex.ru/search', expected: 'Вставьте ссылку на карточку товара' },
+    { label: 'catalog unavailable', status: 'unavailable', reason: 'source_unavailable', url: shortUrl, expected: 'Подбор данных для Маркета временно недоступен' },
+    { label: 'catalog redirect for full link', status: 'unavailable', reason: 'redirect_rejected', url: 'https://market.yandex.ru/card/item/123', expected: 'Подбор данных для Маркета временно недоступен' },
+  ] as const)('explains a Market lookup failure for $label and allows manual save', async ({ status, reason, url, expected }) => {
+    vi.spyOn(metadata, 'resolveMetadata').mockResolvedValue({ ...resultFromMarket, status, reason, name: null, imageUrl: null })
+    const { onClose } = open()
+    change('Ссылка на товар', url)
+    change('Название', 'Manual gift')
+    fetchData()
+
+    expect((await screen.findByRole('status')).textContent).toContain(expected)
+    expect(screen.queryByRole('button', { name: 'Подтвердить' })).toBeNull()
+    save()
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+    expect(body()).toMatchObject({ url, name: 'Manual gift', imageUrl: null })
+  })
+
   it('previews a Market match and keeps the shared link when the user confirms', async () => {
     const resolve = vi.spyOn(metadata, 'resolveMetadata').mockResolvedValue(resultFromMarket)
     const { onClose } = open()

@@ -9,10 +9,27 @@ import './wishlist-modal.css'
 import { ItemImage } from '@/components/ItemImage'
 import { isHttpUrl } from '@/utils/url'
 import type { WishlistItem } from '@/types/wishlist'
+import type { MetadataResult } from '@/types/metadata'
 
 type SuggestedField = 'name' | 'imageUrl'
 type Found = { url: string; name: string | null; imageUrl: string | null; marketSelection: Partial<Record<SuggestedField, boolean>> | null }
 type Upload = { file: File | null; preview: string | null; phase: 'uploading' | 'failed' | 'cancelled' | 'done'; error: string }
+
+const metadataUnavailable = 'Не удалось получить данные. Заполните поля вручную и сохраните товар.'
+
+function metadataFailureMessage(result: MetadataResult, url: string): string {
+  if (result.source !== 'yandexMarket') return metadataUnavailable
+  if (result.reason === 'missing_fields') {
+    return 'Для этой модели и варианта пока нет подсказки. Название и фото можно добавить вручную.'
+  }
+  if (result.status === 'unsupported') {
+    return 'Вставьте ссылку на карточку товара на Маркете или заполните поля вручную.'
+  }
+  if (result.reason === 'redirect_rejected' && /^https?:\/\/(?:market\.yandex\.ru\/cc\/|ya\.cc\/m\/)/i.test(url)) {
+    return 'Короткая ссылка Маркета не раскрылась. Попробуйте вставить полную ссылку на товар или заполните поля вручную.'
+  }
+  return 'Подбор данных для Маркета временно недоступен. Попробуйте позже или заполните поля вручную.'
+}
 
 function fileError(file: File): string {
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) return 'Поддерживаются только JPEG, PNG и WebP.'
@@ -184,7 +201,7 @@ export function WishlistItemModal({ item, onClose }: { item?: WishlistItem; onCl
       const result = await resolveMetadata(draft.url.trim(), controller.signal)
       if (request.current !== controller || controller.signal.aborted) return
       if (result.status === 'unavailable' || result.status === 'unsupported') {
-        setMessage('Не удалось получить данные. Заполните поля вручную и сохраните товар.')
+        setMessage(metadataFailureMessage(result, draft.url.trim()))
         return
       }
       const suggestion: Found = {
@@ -214,7 +231,7 @@ export function WishlistItemModal({ item, onClose }: { item?: WishlistItem; onCl
         : 'Данные не найдены. Заполните поля вручную и сохраните товар.')
     } catch {
       if (request.current === controller && !controller.signal.aborted) {
-        setMessage('Не удалось получить данные. Заполните поля вручную и сохраните товар.')
+        setMessage(metadataUnavailable)
       }
     } finally {
       if (request.current === controller) {
