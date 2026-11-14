@@ -21,8 +21,10 @@ public sealed partial class ProductMetadataService
     {
         if (uri.IdnHost == "ya.cc" || MarketShortPath().IsMatch(uri.AbsolutePath))
             uri = await ResolveMarketShareAsync(uri, ct);
-        var slug = MarketCardPath().Match(uri.AbsolutePath).Groups[1].Value.ToLowerInvariant();
-        var (name, image) = await FindMarketVariantAsync(slug, ct);
+        var card = MarketCardPath().Match(uri.AbsolutePath);
+        var (name, image) = await FindMarketVariantAsync(card.Groups[1].Value.ToLowerInvariant(), ct);
+        if (name is null && image is null)
+            (name, image) = await FindMarketShareDataAsync(uri.AbsolutePath, card.Groups[2].Value, ct);
         return Result(MarketSource, name, image);
     }
 
@@ -63,6 +65,36 @@ public sealed partial class ProductMetadataService
             if (black == white || words.Any(word => word is "plus" or "pro" or "ultra" or "max"))
                 return (null, null);
             return MarketDreameCatalog.Find(await ReadMarketCatalogAsync(DreameCatalog, ct), black ? "black" : "white");
+        }
+        return (null, null);
+    }
+
+    private async Task<(string? Name, string? Image)> FindMarketShareDataAsync(string cardPath, string osku, CancellationToken ct)
+    {
+        // Public Yandex Go storefront. Use the validated card path only, without referral or offer parameters.
+        var html = await ReadMarketCatalogAsync("https://market.yandex.uz/ru" + cardPath, ct);
+        foreach (Match block in MarketPagePatch().Matches(html))
+        {
+            var json = block.Groups[1].Value;
+            if (json.Length > 128 * 1024 || !json.Contains("\"@card/ShortUrl\"", StringComparison.Ordinal)) continue;
+            using var document = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = 32 });
+            var collections = Property(document.RootElement, "collections");
+            var share = Property(collections, "share");
+            if (share.ValueKind != JsonValueKind.Object) continue;
+            var compose = Property(collections, "compose");
+            foreach (var offer in share.EnumerateObject())
+            {
+                var context = Property(offer.Value, "context");
+                if (Text(context, "type") != "ITEM" || Text(context, "osku") != osku ||
+                    Text(Property(compose, offer.Name), "oskuId") != osku)
+                    continue;
+                var name = ValidTitle(Text(offer.Value, "title"));
+                var photo = Text(offer.Value, "picture");
+                if (name is not null && photo is { Length: <= 2000 } && Uri.TryCreate(photo, UriKind.Absolute, out var image) &&
+                    image.Scheme == Uri.UriSchemeHttps && image.IsDefaultPort && image.UserInfo.Length == 0 &&
+                    image.IdnHost == "avatars.mds.yandex.net" && MarketPhotoPath().IsMatch(image.AbsolutePath))
+                    return (name, image.GetLeftPart(UriPartial.Path));
+            }
         }
         return (null, null);
     }
@@ -116,7 +148,7 @@ public sealed partial class ProductMetadataService
         return (null, null);
     }
 
-    [GeneratedRegex(@"^/card/([a-zA-Z0-9-]{1,600})/[1-9][0-9]{0,18}/?$")]
+    [GeneratedRegex(@"^/card/([a-zA-Z0-9-]{1,600})/([1-9][0-9]{0,18})/?$")]
     private static partial Regex MarketCardPath();
     [GeneratedRegex(@"^/cc/[A-Za-z0-9_-]{1,64}/?$")]
     private static partial Regex MarketShortPath();
@@ -132,4 +164,8 @@ public sealed partial class ProductMetadataService
     private static partial Regex CommoTitle();
     [GeneratedRegex(@"^/get-yastore/[0-9]+/[a-zA-Z0-9_-]+/orig$")]
     private static partial Regex CommoPhotoPath();
+    [GeneratedRegex(@"<noframes\s+data-apiary=['""]patch['""]>(.*?)</noframes>", RegexOptions.Singleline | RegexOptions.CultureInvariant, 1000)]
+    private static partial Regex MarketPagePatch();
+    [GeneratedRegex(@"^/get-mpic/[0-9]+/[a-zA-Z0-9_.-]+/orig$")]
+    private static partial Regex MarketPhotoPath();
 }

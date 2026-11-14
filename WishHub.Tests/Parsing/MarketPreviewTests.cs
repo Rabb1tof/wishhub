@@ -43,7 +43,7 @@ public sealed class MarketPreviewTests
     [InlineData("unknown-family")]
     [InlineData("vacuum-accessory")]
     [InlineData("headphone-accessory")]
-    public async Task ResolveAsync_MarketUnqualifiedVariant_LeavesManualEntryWithoutCatalogRequests(string variant)
+    public async Task ResolveAsync_MarketUnqualifiedVariant_LeavesManualEntryWhenNoVerifiedRegionalCard(string variant)
     {
         var slug = variant switch
         {
@@ -54,13 +54,13 @@ public sealed class MarketPreviewTests
             "headphone-accessory" => "chekhol-dlya-naushniki-commo-etude-s-lavandovyy",
             _ => "robot-pylesos-other-f21-black"
         };
-        using var handler = new CatalogHandler(_ => throw new InvalidOperationException("unexpected request"));
+        using var handler = new CatalogHandler(_ => Html("<html>Empty public catalog</html>"));
         using var service = new ProductMetadataService(new HttpClient(handler), enableMarketPreview: true);
 
         var result = await service.ResolveAsync($"https://market.yandex.ru/card/{slug}/1234567890");
 
         Assert.Equal(new ProductMetadataDto("unavailable", null, null, "yandexMarket", "missing_fields"), result);
-        Assert.Empty(handler.Requests);
+        Assert.Equal(new[] { $"https://market.yandex.uz/ru/card/{slug}/1234567890" }, handler.Requests);
     }
 
     [Theory]
@@ -107,7 +107,43 @@ public sealed class MarketPreviewTests
         using var service = new ProductMetadataService(new HttpClient(handler), enableMarketPreview: true);
 
         Assert.Equal(new ProductMetadataDto("unavailable", null, null, "yandexMarket", "missing_fields"), await service.ResolveAsync(Card));
-        Assert.Equal(new[] { Shop }, handler.Requests);
+        Assert.Equal(new[] { Shop, Card.Replace("market.yandex.ru/", "market.yandex.uz/ru/") }, handler.Requests);
+    }
+
+    [Theory]
+    [InlineData("short", true)]
+    [InlineData("full", true)]
+    [InlineData("wrong-share-id", false)]
+    [InlineData("wrong-compose-id", false)]
+    [InlineData("foreign-image", false)]
+    public async Task ResolveAsync_MarketRegionalCard_UsesOnlySameArticleShareData(string format, bool accepted)
+    {
+        const string path = "/card/termobelye-chernyy-xl/4726842624";
+        const string shortUrl = "https://market.yandex.ru/cc/BZFuwr";
+        const string image = "https://avatars.mds.yandex.net/get-mpic/19826024/2a000001photo/orig";
+        var shareId = format == "wrong-share-id" ? "4726842623" : "4726842624";
+        var composeId = format == "wrong-compose-id" ? "4726842623" : "4726842624";
+        var picture = format == "foreign-image" ? image.Replace("avatars.mds.yandex.net", "other.example") : image;
+        var regional = $$$$"""
+            <html><noframes data-apiary="patch">{
+                "widgets":{"@card/ShortUrl":{}},
+                "collections":{
+                    "share":{"offer":{"context":{"osku":"{{{{shareId}}}}","type":"ITEM"},"title":"Комплект термобелья","picture":"{{{{picture}}}}"}},
+                    "compose":{"offer":{"oskuId":"{{{{composeId}}}}"}}
+                }
+            }</noframes></html>
+            """;
+        using var handler = new CatalogHandler(uri => uri.AbsoluteUri == shortUrl
+            ? Redirect("https://market.yandex.ru" + path + "?offerid=redirected") : Html(regional));
+        using var service = new ProductMetadataService(new HttpClient(handler), enableMarketPreview: true);
+        var url = format == "short" ? shortUrl : "https://market.yandex.ru" + path + "?offerid=pasted";
+
+        var result = await service.ResolveAsync(url);
+
+        Assert.Equal(accepted ? new ProductMetadataDto("ok", "Комплект термобелья", image, "yandexMarket", null)
+            : new ProductMetadataDto("unavailable", null, null, "yandexMarket", "missing_fields"), result);
+        var expected = "https://market.yandex.uz/ru" + path;
+        Assert.Equal(format == "short" ? new[] { shortUrl, expected } : new[] { expected }, handler.Requests);
     }
 
     private static HttpResponseMessage Html(string body) => new(HttpStatusCode.OK) { Content = new StringContent(body) };
