@@ -146,6 +146,62 @@ public sealed class MarketPreviewTests
         Assert.Equal(format == "short" ? new[] { shortUrl, expected } : new[] { expected }, handler.Requests);
     }
 
+    [Theory]
+    [InlineData("forbidden")]
+    [InlineData("rate-limited")]
+    [InlineData("invalid-json")]
+    [InlineData("network-error")]
+    [InlineData("connection-timeout")]
+    public async Task ResolveAsync_MarketCatalogFailure_UsesVerifiedRegionalCard(string failure)
+    {
+        const string image = "https://avatars.mds.yandex.net/get-mpic/19826024/regional/orig";
+        const string regional = """
+            <noframes data-apiary="patch">{
+                "widgets":{"@card/ShortUrl":{}},
+                "collections":{
+                    "share":{"offer":{"context":{"osku":"5828126315","type":"ITEM"},"title":"Regional COMMO Etude","picture":"https://avatars.mds.yandex.net/get-mpic/19826024/regional/orig"}},
+                    "compose":{"offer":{"oskuId":"5828126315"}}
+                }
+            }</noframes>
+            """;
+        var regionalUrl = Card.Replace("market.yandex.ru/", "market.yandex.uz/ru/");
+        using var handler = new CatalogHandler(uri =>
+        {
+            if (uri.AbsoluteUri == regionalUrl) return Html(regional);
+            Assert.Equal(Shop, uri.AbsoluteUri);
+            return failure switch
+            {
+                "forbidden" => new HttpResponseMessage(HttpStatusCode.Forbidden),
+                "rate-limited" => new HttpResponseMessage(HttpStatusCode.TooManyRequests),
+                "invalid-json" => Html("<script type=\"application/ld+json\">{broken}</script>"),
+                "network-error" => throw new HttpRequestException("No response"),
+                _ => throw new TaskCanceledException("Connection timeout", new TimeoutException())
+            };
+        });
+        using var service = new ProductMetadataService(new HttpClient(handler), enableMarketPreview: true);
+
+        var result = await service.ResolveAsync(Card);
+
+        Assert.Equal(new ProductMetadataDto("ok", "Regional COMMO Etude", image, "yandexMarket", null), result);
+        Assert.Equal(new[] { Shop, regionalUrl }, handler.Requests);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_MarketCatalogCancelled_DoesNotStartRegionalLookup()
+    {
+        using var cancellation = new CancellationTokenSource();
+        using var handler = new CatalogHandler(uri =>
+        {
+            Assert.Equal(Shop, uri.AbsoluteUri);
+            cancellation.Cancel();
+            throw new OperationCanceledException(cancellation.Token);
+        });
+        using var service = new ProductMetadataService(new HttpClient(handler), enableMarketPreview: true);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.ResolveAsync(Card, cancellation.Token));
+        Assert.Equal(new[] { Shop }, handler.Requests);
+    }
+
     private static HttpResponseMessage Html(string body) => new(HttpStatusCode.OK) { Content = new StringContent(body) };
     private static HttpResponseMessage Redirect(string url)
     {

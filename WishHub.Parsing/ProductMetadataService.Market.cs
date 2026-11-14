@@ -22,10 +22,21 @@ public sealed partial class ProductMetadataService
         if (uri.IdnHost == "ya.cc" || MarketShortPath().IsMatch(uri.AbsolutePath))
             uri = await ResolveMarketShareAsync(uri, ct);
         var card = MarketCardPath().Match(uri.AbsolutePath);
-        var (name, image) = await FindMarketVariantAsync(card.Groups[1].Value.ToLowerInvariant(), ct);
-        if (name is null && image is null)
-            (name, image) = await FindMarketShareDataAsync(uri.AbsolutePath, card.Groups[2].Value, ct);
-        return Result(MarketSource, name, image);
+        try
+        {
+            var (name, image) = await FindMarketVariantAsync(card.Groups[1].Value.ToLowerInvariant(), ct);
+            if (name is not null || image is not null)
+                return Result(MarketSource, name, image);
+        }
+        catch (Exception e) when (!ct.IsCancellationRequested && e is
+            (MetadataException or HttpRequestException or IOException or JsonException or RegexMatchTimeoutException or OperationCanceledException))
+        {
+            // A failed catalog, including its connection timeout, can leave time for the regional card.
+        }
+
+        ct.ThrowIfCancellationRequested();
+        var (regionalName, regionalImage) = await FindMarketShareDataAsync(uri.AbsolutePath, card.Groups[2].Value, ct);
+        return Result(MarketSource, regionalName, regionalImage);
     }
 
     private async Task<Uri> ResolveMarketShareAsync(Uri share, CancellationToken ct)
