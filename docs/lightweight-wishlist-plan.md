@@ -99,6 +99,8 @@
 - Не парсить HTML Google и не использовать скрытый Search Element для сбора и постоянного хранения выдачи. Проверить условия выбранного поискового API и работу именно его image endpoint.
 - [x] Поддержать короткие товарные ссылки Ozon `ozon.ru/t/…`: один GET заголовков без перехода по редиректу, точная проверка HTTPS-адреса карточки, затем обычное получение имени и фото через WBRay. Сохранять исходную ссылку пользователя.
 
+- [x] Стенд Маркета (`Metadata__EnableMarketPreview=true`, по умолчанию выключен): распознавать товарные `/card/…`, короткие `market.yandex.ru/cc/…` и `ya.cc/m/…`. Подбирать совпадение модели и цвета из бесплатной витрины COMMO или предложений Dreame F21 на Price.ru; применять имя и фото только после подтверждения. Сохранять исходную ссылку, ручное добавление доступно при отсутствии совпадения.
+
 Источники исследования: [WBRay](https://wbray.ru/ozon/photo-download/), [Shopify Product API](https://shopify.dev/docs/api/ajax/reference/product), [WooCommerce Store API](https://developer.woocommerce.com/docs/apis/store-api/resources-endpoints/products/), [Google Images API SerpApi](https://serpapi.com/google-images-api), [Google Search Element](https://developers.google.com/custom-search/docs/element). Условия и поддержка внешних сервисов проверяются повторно при реализации; опубликованный тариф не считается успешным тестом товара.
 
 ## 5. Хранение и миграция существующих карточек

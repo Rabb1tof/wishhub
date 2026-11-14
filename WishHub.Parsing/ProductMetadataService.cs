@@ -8,7 +8,7 @@ using WishHub.Core.Interfaces;
 
 namespace WishHub.Parsing;
 
-public sealed partial class ProductMetadataService(HttpClient http, bool enableOzonWbray = false)
+public sealed partial class ProductMetadataService(HttpClient http, bool enableOzonWbray = false, bool enableMarketPreview = false)
     : IProductMetadataService, IDisposable
 {
     public const int MaxResponseBytes = 1024 * 1024;
@@ -21,8 +21,11 @@ public sealed partial class ProductMetadataService(HttpClient http, bool enableO
         var isProduct = TryProduct(url, out var uri, out var source, out var sku);
         // Invalid authorities never reach the source check in TryProduct.
         var isOzonShare = !isProduct && source == "ozon" && OzonSharePath().IsMatch(uri!.AbsolutePath);
-        if (!isProduct && !isOzonShare)
+        var isMarket = source == MarketSource && IsMarketLink(uri!);
+        if (!isProduct && !isOzonShare && !isMarket)
             return Failure("unsupported", source, "unsupported_url");
+        if (isMarket && !enableMarketPreview)
+            return Failure("unavailable", source, "source_disabled");
         if (source == "ozon" && !enableOzonWbray)
             return Failure("unavailable", source, "source_disabled");
         if (!await _concurrency.WaitAsync(0, ct))
@@ -32,6 +35,8 @@ public sealed partial class ProductMetadataService(HttpClient http, bool enableO
         timeout.CancelAfter(Deadline);
         try
         {
+            if (isMarket)
+                return await ResolveMarketAsync(uri!, timeout.Token);
             if (isOzonShare)
                 (uri, sku) = await ResolveOzonShareAsync(uri!, timeout.Token);
             return source == "wildberries"
@@ -46,7 +51,7 @@ public sealed partial class ProductMetadataService(HttpClient http, bool enableO
         {
             return Failure("unavailable", source, e.Message);
         }
-        catch (JsonException)
+        catch (Exception e) when (e is JsonException or RegexMatchTimeoutException)
         {
             return Failure("unavailable", source, "invalid_response");
         }
@@ -169,23 +174,29 @@ public sealed partial class ProductMetadataService(HttpClient http, bool enableO
 
     private async Task<JsonDocument> ReadJsonAsync(HttpRequestMessage request, CancellationToken ct)
     {
+        var body = await ReadBodyAsync(request, MaxResponseBytes, ct);
+        return JsonDocument.Parse(body, new JsonDocumentOptions { MaxDepth = 32 });
+    }
+
+    private async Task<ReadOnlyMemory<byte>> ReadBodyAsync(HttpRequestMessage request, int maxBytes, CancellationToken ct)
+    {
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
         if (response.StatusCode == HttpStatusCode.TooManyRequests) throw new MetadataException("rate_limited");
         if ((int)response.StatusCode is >= 300 and < 400) throw new MetadataException("redirect_rejected");
         if (!response.IsSuccessStatusCode) throw new MetadataException("source_unavailable");
-        if (response.Content.Headers.ContentLength > MaxResponseBytes) throw new MetadataException("response_too_large");
+        if (response.Content.Headers.ContentLength > maxBytes) throw new MetadataException("response_too_large");
         await using var body = await response.Content.ReadAsStreamAsync(ct);
         using var buffer = new MemoryStream();
         var chunk = new byte[8192];
         while (true)
         {
-            var count = await body.ReadAsync(chunk.AsMemory(0, Math.Min(chunk.Length, MaxResponseBytes + 1 - (int)buffer.Length)), ct);
+            var count = await body.ReadAsync(chunk.AsMemory(0, Math.Min(chunk.Length, maxBytes + 1 - (int)buffer.Length)), ct);
             if (count == 0) break;
-            if (buffer.Length + count > MaxResponseBytes) throw new MetadataException("response_too_large");
+            if (buffer.Length + count > maxBytes) throw new MetadataException("response_too_large");
             buffer.Write(chunk, 0, count);
         }
         ct.ThrowIfCancellationRequested();
-        return JsonDocument.Parse(buffer.GetBuffer().AsMemory(0, (int)buffer.Length), new JsonDocumentOptions { MaxDepth = 32 });
+        return buffer.GetBuffer().AsMemory(0, (int)buffer.Length);
     }
 
     private static bool TryProduct(string? url, out Uri? uri, out string source, out long sku)
@@ -211,7 +222,8 @@ public sealed partial class ProductMetadataService(HttpClient http, bool enableO
                 match = OzonPath().Match(uri.AbsolutePath);
                 break;
             case "market.yandex.ru":
-                source = "yandexMarket";
+            case "ya.cc":
+                source = MarketSource;
                 return false;
             default:
                 return false;
