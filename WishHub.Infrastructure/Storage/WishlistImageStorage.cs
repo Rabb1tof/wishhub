@@ -1,4 +1,3 @@
-using System.Buffers.Binary;
 using System.Security;
 using WishHub.Core.Exceptions;
 using WishHub.Core.Interfaces;
@@ -42,8 +41,6 @@ public sealed class WishlistImageStorage : IWishlistImageStorage
         try
         {
             var buffer = new byte[64 * 1024];
-            var signature = new byte[33];
-            var signatureLength = 0;
             long length = 0;
             await using (var output = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write,
                 FileShare.None, buffer.Length, FileOptions.Asynchronous | FileOptions.SequentialScan))
@@ -59,18 +56,19 @@ public sealed class WishlistImageStorage : IWishlistImageStorage
                         throw new WishlistImageUploadException(WishlistImageUploadError.TooLarge, "Image exceeds the 5 MiB limit.");
                     if (ownerBytes > WishlistImageLimits.MaxOwnerBytes - length)
                         throw new WishlistImageUploadException(WishlistImageUploadError.QuotaExceeded, "Wishlist image storage quota exceeded.");
-                    var signatureBytes = Math.Min(read, signature.Length - signatureLength);
-                    buffer.AsSpan(0, signatureBytes).CopyTo(signature.AsSpan(signatureLength));
-                    signatureLength += signatureBytes;
                     await output.WriteAsync(buffer.AsMemory(0, read), ct);
                 }
             }
 
-            var extension = DetectExtension(signature.AsSpan(0, signatureLength), length);
+            EnsureSafePath(temporaryPath);
+            string? extension;
+            await using (var saved = new FileStream(temporaryPath, FileMode.Open, FileAccess.Read, FileShare.Read,
+                4096, FileOptions.Asynchronous | FileOptions.SequentialScan))
+                extension = await ImageFileFormat.DetectExtensionAsync(saved, length, ct);
             if (extension is null)
                 throw InvalidImage();
             var image = new ManagedWishlistImage(ownerId, imageId, extension);
-            if (!mime.Equals(image.ContentType, StringComparison.OrdinalIgnoreCase))
+            if (!ImageFileFormat.MatchesContentType(extension, mime))
                 throw InvalidImage();
             ct.ThrowIfCancellationRequested();
             EnsureSafePath(temporaryPath);
@@ -147,30 +145,6 @@ public sealed class WishlistImageStorage : IWishlistImageStorage
                 : usedBytes + file.Length;
         }
         return usedBytes;
-    }
-
-    private static string? DetectExtension(ReadOnlySpan<byte> header, long length)
-    {
-        // Check framing only; pixel decoding and re-encoding are intentionally outside this store.
-        if (header.Length >= 12 && header.StartsWith(new byte[] { 0xFF, 0xD8, 0xFF }))
-        {
-            var segmentLength = BinaryPrimitives.ReadUInt16BigEndian(header.Slice(4, 2));
-            if (segmentLength >= 2 && segmentLength <= length - 4)
-                return "jpg";
-        }
-        if (header.Length >= 33 && header.StartsWith(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A }) &&
-            BinaryPrimitives.ReadUInt32BigEndian(header.Slice(8, 4)) == 13 && header.Slice(12, 4).SequenceEqual("IHDR"u8) &&
-            BinaryPrimitives.ReadUInt32BigEndian(header.Slice(16, 4)) > 0 && BinaryPrimitives.ReadUInt32BigEndian(header.Slice(20, 4)) > 0)
-            return "png";
-        if (header.Length >= 20 && header[..4].SequenceEqual("RIFF"u8) && header.Slice(8, 4).SequenceEqual("WEBP"u8) &&
-            (header.Slice(12, 4).SequenceEqual("VP8 "u8) || header.Slice(12, 4).SequenceEqual("VP8L"u8) || header.Slice(12, 4).SequenceEqual("VP8X"u8)))
-        {
-            var riffLength = BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(4, 4));
-            var chunkLength = BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(16, 4));
-            if ((long)riffLength + 8 == length && chunkLength > 0 && (long)chunkLength + 20 + (chunkLength & 1) <= length)
-                return "webp";
-        }
-        return null;
     }
 
     private static void EnsureSafePath(string path)

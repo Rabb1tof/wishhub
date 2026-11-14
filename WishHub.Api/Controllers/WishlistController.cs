@@ -22,10 +22,11 @@ public class WishlistController(IWishlistService wishlistService) : ControllerBa
         return Ok(await wishlistService.GetItemsAsync(userId, userId, ct));
     }
 
+    [AllowAnonymous]
     [HttpGet("user/{userId:guid}")]
     public async Task<ActionResult<IReadOnlyList<WishlistItemDto>>> GetUserWishlist(Guid userId, CancellationToken ct)
     {
-        var viewerId = GetCurrentUserId();
+        Guid? viewerId = Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var id) ? id : null;
         if (!await wishlistService.CanViewWishlistAsync(userId, viewerId, ct))
             return StatusCode(403, new { error = "Wishlist is private" });
         return Ok(await wishlistService.GetItemsAsync(userId, viewerId, ct));
@@ -89,9 +90,9 @@ public class WishlistController(IWishlistService wishlistService) : ControllerBa
     }
 
     [HttpPost("{id:guid}/cancel-reservation")]
-    public async Task<ActionResult<WishlistItemDto>> CancelReservation(Guid id, CancellationToken ct)
+    public async Task<IActionResult> CancelReservation(Guid id, CancellationToken ct)
     {
-        var item = await wishlistService.CancelReservationAsync(id, GetCurrentUserId(), ct);
-        return item == null ? BadRequest(new { error = "Cannot cancel reservation" }) : Ok(item);
+        var cancelled = await wishlistService.CancelReservationAsync(id, GetCurrentUserId(), ct);
+        return cancelled ? NoContent() : BadRequest(new { error = "Cannot cancel reservation" });
     }
 }

@@ -9,10 +9,27 @@ import './wishlist-modal.css'
 import { ItemImage } from '@/components/ItemImage'
 import { isHttpUrl } from '@/utils/url'
 import type { WishlistItem } from '@/types/wishlist'
+import type { MetadataResult } from '@/types/metadata'
 
 type SuggestedField = 'name' | 'imageUrl'
-type Found = { name: string | null; imageUrl: string | null }
+type Found = { url: string; name: string | null; imageUrl: string | null; marketSelection: Partial<Record<SuggestedField, boolean>> | null }
 type Upload = { file: File | null; preview: string | null; phase: 'uploading' | 'failed' | 'cancelled' | 'done'; error: string }
+
+const metadataUnavailable = 'Не удалось получить данные. Заполните поля вручную и сохраните товар.'
+
+function metadataFailureMessage(result: MetadataResult, url: string): string {
+  if (result.source !== 'yandexMarket') return metadataUnavailable
+  if (result.reason === 'missing_fields') {
+    return 'Для этой модели и варианта пока нет подсказки. Название и фото можно добавить вручную.'
+  }
+  if (result.status === 'unsupported') {
+    return 'Вставьте ссылку на карточку товара на Маркете или заполните поля вручную.'
+  }
+  if (result.reason === 'redirect_rejected' && /^https?:\/\/(?:market\.yandex\.ru\/cc\/|ya\.cc\/m\/)/i.test(url)) {
+    return 'Короткая ссылка Маркета не раскрылась. Попробуйте вставить полную ссылку на товар или заполните поля вручную.'
+  }
+  return 'Подбор данных для Маркета временно недоступен. Попробуйте позже или заполните поля вручную.'
+}
 
 function fileError(file: File): string {
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) return 'Поддерживаются только JPEG, PNG и WebP.'
@@ -39,6 +56,7 @@ export function WishlistItemModal({ item, onClose }: { item?: WishlistItem; onCl
   const mounted = useRef(true)
   const dialog = useRef<HTMLElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
+  const metadataButton = useRef<HTMLButtonElement>(null)
   const uploadRequest = useRef<AbortController | null>(null)
   const previewUrl = useRef<string | null>(null)
   const [upload, setUpload] = useState<Upload | null>(null)
@@ -112,6 +130,9 @@ export function WishlistItemModal({ item, onClose }: { item?: WishlistItem; onCl
   }
 
   const changeSuggestedField = (field: SuggestedField, value: string) => {
+    setFound((current) => current?.marketSelection
+      ? { ...current, marketSelection: { ...current.marketSelection, [field]: false } }
+      : current)
     setDraft((current) => ({
       ...current, [field]: value,
       manual: { ...current.manual, [field]: true },
@@ -180,14 +201,20 @@ export function WishlistItemModal({ item, onClose }: { item?: WishlistItem; onCl
       const result = await resolveMetadata(draft.url.trim(), controller.signal)
       if (request.current !== controller || controller.signal.aborted) return
       if (result.status === 'unavailable' || result.status === 'unsupported') {
-        setMessage('Не удалось получить данные. Заполните поля вручную и сохраните товар.')
+        setMessage(metadataFailureMessage(result, draft.url.trim()))
         return
       }
       const suggestion: Found = {
+        url: draft.url,
+        marketSelection: result.source === 'yandexMarket' ? {} : null,
         name: result.name?.trim() || null,
         imageUrl: result.imageUrl && isHttpUrl(result.imageUrl) && isWishlistImageUrl(result.imageUrl) ? result.imageUrl.trim() : null,
       }
       setFound(suggestion)
+      if (suggestion.marketSelection && (suggestion.name || suggestion.imageUrl)) {
+        setMessage('Сверьте модель и цвет. Фото может быть из другого магазина.')
+        return
+      }
       setDraft((current) => {
         if (current.url !== draft.url) return current
         const next = { ...current, automatic: { ...current.automatic } }
@@ -204,7 +231,7 @@ export function WishlistItemModal({ item, onClose }: { item?: WishlistItem; onCl
         : 'Данные не найдены. Заполните поля вручную и сохраните товар.')
     } catch {
       if (request.current === controller && !controller.signal.aborted) {
-        setMessage('Не удалось получить данные. Заполните поля вручную и сохраните товар.')
+        setMessage(metadataUnavailable)
       }
     } finally {
       if (request.current === controller) {
@@ -214,16 +241,41 @@ export function WishlistItemModal({ item, onClose }: { item?: WishlistItem; onCl
     }
   }
 
+  const isSelected = (field: SuggestedField) => {
+    if (!found?.[field]) return false
+    return found.marketSelection === null || (found.marketSelection[field] ??
+      (!draft.manual[field] && (!draft[field].trim() || draft.automatic[field])))
+  }
+
+  const selectFound = (field: SuggestedField, checked: boolean) => {
+    setFound((current) => current?.marketSelection
+      ? { ...current, marketSelection: { ...current.marketSelection, [field]: checked } }
+      : current)
+  }
+
+  const dismissFound = () => {
+    setFound(null)
+    setMessage('')
+    metadataButton.current?.focus()
+  }
+
   const applyFound = () => {
-    if (!found) return
-    if (found.imageUrl) resetUpload()
-    setDraft((current) => ({
+    if (!found || found.url !== draft.url) return
+    const name = isSelected('name') ? found.name : null
+    const imageUrl = isSelected('imageUrl') ? found.imageUrl : null
+    if (!name && !imageUrl) return
+    if (imageUrl) resetUpload()
+    setDraft((current) => current.url !== found.url ? current : {
       ...current,
-      name: found.name ?? current.name,
-      imageUrl: found.imageUrl ?? current.imageUrl,
-      manual: { name: !!found.name || current.manual.name, imageUrl: !!found.imageUrl || current.manual.imageUrl },
-      automatic: { name: !found.name && current.automatic.name, imageUrl: !found.imageUrl && current.automatic.imageUrl },
-    }))
+      name: name ?? current.name,
+      imageUrl: imageUrl ?? current.imageUrl,
+      manual: { name: !!name || current.manual.name, imageUrl: !!imageUrl || current.manual.imageUrl },
+      automatic: { name: !name && current.automatic.name, imageUrl: !imageUrl && current.automatic.imageUrl },
+    })
+    if (found.marketSelection) {
+      dismissFound()
+      setMessage('Выбранные данные добавлены в форму.')
+    }
   }
 
   const save = async (event: FormEvent) => {
@@ -268,17 +320,35 @@ export function WishlistItemModal({ item, onClose }: { item?: WishlistItem; onCl
               <label htmlFor="item-url">Ссылка на товар</label>
               <div className="wh-url-row">
                 <input id="item-url" type="url" required maxLength={2000} value={draft.url} onChange={(e) => changeUrl(e.target.value)} placeholder="https://..." className="wh-input" aria-invalid={!!draft.url && !validUrl} aria-describedby="item-url-hint" />
-                <button type="button" onClick={getMetadata} disabled={!validUrl || fetching} className="wh-button wh-button--quiet" aria-busy={fetching}>{fetching ? 'Получение данных...' : 'Получить данные'}</button>
+                <button ref={metadataButton} type="button" onClick={getMetadata} disabled={!validUrl || fetching} className="wh-button wh-button--quiet" aria-busy={fetching}>{fetching ? 'Получение данных...' : 'Получить данные'}</button>
               </div>
               <p id="item-url-hint" className={draft.url && !validUrl ? 'wh-field-error' : 'wh-field-hint'}>{draft.url && !validUrl ? 'Введите HTTP(S) ссылку длиной до 2000 символов.' : 'По кнопке попробуем найти название и фото.'}</p>
             </div>
             {message && <p role="status" className="wh-metadata-message">{message}</p>}
-            {found && (found.name || found.imageUrl) && (
+            {found && (found.name || found.imageUrl) && (found.marketSelection ? (
+              <section className="wh-found wh-found--market" aria-label="Предложение для ссылки Маркета">
+                <div className="wh-found-details">
+                  {found.imageUrl && <div className="wh-found-photo"><ItemImage imageUrl={found.imageUrl} name="Предложенное фото товара" className="wh-found-image" /></div>}
+                  <div>
+                    <h3>Возможное совпадение</h3>
+                    {found.name && <p>{found.name}</p>}
+                    <div className="wh-found-fields">
+                      {found.name && <label><input type="checkbox" checked={isSelected('name')} onChange={(event) => selectFound('name', event.target.checked)} /> Использовать название</label>}
+                      {found.imageUrl && <label><input type="checkbox" checked={isSelected('imageUrl')} onChange={(event) => selectFound('imageUrl', event.target.checked)} /> Использовать фото</label>}
+                    </div>
+                  </div>
+                </div>
+                <div className="wh-found-actions">
+                  <button type="button" onClick={dismissFound} className="wh-button wh-button--quiet">Отклонить</button>
+                  <button type="button" onClick={applyFound} disabled={!isSelected('name') && !isSelected('imageUrl')} className="wh-button wh-button--primary">Подтвердить</button>
+                </div>
+              </section>
+            ) : (
               <div className="wh-found">
                 <div>{found.name && <p>Найдено: {found.name}</p>}{found.imageUrl && <p className="wh-muted">Найдено фото товара</p>}</div>
                 <button type="button" onClick={applyFound} className="wh-button wh-button--quiet">Применить найденное</button>
               </div>
-            )}
+            ))}
             <div className="wh-field">
               <label htmlFor="item-name">Название</label>
               <input id="item-name" required maxLength={500} value={draft.name} onChange={(e) => changeSuggestedField('name', e.target.value)} placeholder="Что вас порадует?" className="wh-input" aria-invalid={!!draft.name && !validName} />

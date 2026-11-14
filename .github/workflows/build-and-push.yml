@@ -8,6 +8,8 @@ name: Build and Push Docker Images
 # and UNLIMITED for public repositories — no billing required.
 
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
     tags: ["v*.*.*"]
@@ -24,10 +26,57 @@ env:
   FRONTEND_IMAGE_NAME: ${{ github.repository_owner }}/wishhub-frontend
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16-alpine
+        # Disposable CI credentials; never used by a deployment.
+        env:
+          POSTGRES_DB: wishhub_ci
+          POSTGRES_USER: wishhub_ci
+          POSTGRES_PASSWORD: local-ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U wishhub_ci -d wishhub_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      ConnectionStrings__Default: Host=localhost;Port=5432;Database=wishhub_ci;Username=wishhub_ci;Password=local-ci-only-password
+      WISHHUB_TEST_POSTGRES: Host=localhost;Port=5432;Database=wishhub_ci;Username=wishhub_ci;Password=local-ci-only-password
+      Jwt__Secret: Disposable-CI-only-signing-key-not-used-by-any-deployment-1234567890
+      Jwt__Issuer: WishHub
+      Jwt__Audience: WishHubUsers
+      Jwt__AccessTokenExpiryMinutes: 60
+      Jwt__RefreshTokenExpiryDays: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Backend tests including PostgreSQL
+        run: dotnet test WishHub.sln -c Release --logger trx --results-directory TestResults
+      - name: Frontend checks
+        working-directory: frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
+          npm run build
+          npm run lint
+
   # =============================================
   # Backend API
   # =============================================
   build-api:
+    needs: test
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -81,6 +130,8 @@ jobs:
   # Frontend
   # =============================================
   build-frontend:
+    needs: test
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read

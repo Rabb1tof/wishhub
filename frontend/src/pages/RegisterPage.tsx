@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { isAxiosError } from 'axios'
 import { Link, useNavigate } from 'react-router-dom'
 import { useRegister } from '@/api/useAuth'
 
@@ -25,8 +26,22 @@ export function RegisterPage() {
     try {
       await register.mutateAsync(data)
       navigate('/')
-    } catch (err: any) {
-      const responseData = err.response?.data
+    } catch (err) {
+      const response = isAxiosError<{
+        errors?: string[] | Record<string, string[]>
+        Errors?: string[] | Record<string, string[]>
+        detail?: string
+        title?: string
+      } | string>(err) ? err.response : undefined
+      if (response?.status === 429) {
+        setError('Слишком много попыток регистрации. Попробуйте позже.')
+        return
+      }
+      const responseData = response?.data
+      if (typeof responseData === 'string') {
+        setError(responseData || 'Ошибка регистрации')
+        return
+      }
       const errors = responseData?.Errors || responseData?.errors
 
       if (errors) {
@@ -46,11 +61,6 @@ export function RegisterPage() {
         return
       }
 
-      if (typeof responseData === 'string') {
-        setError(responseData)
-        return
-      }
-
       setError('Ошибка регистрации')
     }
   }
@@ -63,7 +73,7 @@ export function RegisterPage() {
         <h2 className="text-3xl font-bold text-center">Регистрация</h2>
 
         {error && (
-          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+          <div role="alert" className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
             {error}
           </div>
         )}
@@ -142,10 +152,6 @@ export function RegisterPage() {
               <p className="text-red-500 text-sm mt-1">Пароли не совпадают</p>
             )}
           </div>
-
-          {register.isError && (
-            <p className="text-red-500 text-sm">Ошибка регистрации</p>
-          )}
 
           <button
             type="submit"

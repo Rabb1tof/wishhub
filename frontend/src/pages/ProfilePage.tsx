@@ -19,7 +19,7 @@ export function ProfilePage() {
 
   if (!profile) {
     return (
-      <Layout>
+      <Layout requireAuth={false}>
         <section className="wh-wishlist">
           <header className="wh-wishlist-heading"><h1 className="wh-page-heading">Профиль</h1></header>
           <div className="wh-wishlist-state">
@@ -34,7 +34,7 @@ export function ProfilePage() {
   const friendshipStatus = profile.friendshipStatus
 
   return (
-    <Layout>
+    <Layout requireAuth={false}>
       <section className="wh-wishlist">
         <header className="wh-profile-heading">
           <div className="wh-profile-identity">
@@ -47,11 +47,11 @@ export function ProfilePage() {
           </div>
           <div className="wh-profile-actions">
             {isOwnProfile && <ShareProfileButton username={profile.username} displayName={profile.displayName} />}
-            {!isOwnProfile && friendshipStatus === null && (
+            {currentUser && !isOwnProfile && friendshipStatus === null && (
               <button type="button" onClick={() => sendRequest.mutate(profile.id)} disabled={sendRequest.isPending} className="wh-button wh-button--quiet">{sendRequest.isPending ? 'Отправка...' : 'Добавить в друзья'}</button>
             )}
-            {!isOwnProfile && friendshipStatus === 'pending' && <span className="wh-profile-status">Заявка отправлена</span>}
-            {!isOwnProfile && friendshipStatus === 'accepted' && (
+            {currentUser && !isOwnProfile && friendshipStatus === 'pending' && <span className="wh-profile-status">Заявка отправлена</span>}
+            {currentUser && !isOwnProfile && friendshipStatus === 'accepted' && (
               <>
                 <span className="wh-profile-status">В друзьях</span>
                 <Link to={`/messages?user=${profile.id}`} className="wh-button wh-button--quiet">Написать сообщение</Link>

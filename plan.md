@@ -1,3 +1,5 @@
+> **Текущая работа после глубокого ревью:** [план и результаты двух серий исправлений](docs/security-fix-plan.md). Исправления собраны в `fix/security-and-consistency`.
+
 # Wishlist App — Детальный план реализации
 
 > **Актуальный план облегчения:** [docs/lightweight-wishlist-plan.md](docs/lightweight-wishlist-plan.md).

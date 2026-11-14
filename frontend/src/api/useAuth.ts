@@ -1,57 +1,48 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { CanceledError, isAxiosError } from 'axios'
 import api from './client'
-import { useAuthStore, mapAuthResponseFromApi } from '@/store/auth'
+import { useAuthStore, mapAuthResponseFromApi, syncAuthFromStorage } from '@/store/auth'
 import { requestNotificationPermission } from '@/utils/notifications'
 import { stopConnection } from '@/hooks/useSignalR'
 import type { AuthResponseRaw, LoginRequest, RegisterRequest } from '@/types/auth'
 
-const AUTH_KEY = 'auth'
+async function signIn(endpoint: string, data: LoginRequest | RegisterRequest) {
+  const version = useAuthStore.getState().sessionVersion
+  const response = await api.post<AuthResponseRaw>(endpoint, data)
+  if (useAuthStore.getState().sessionVersion !== version) throw new CanceledError('Session changed')
+  const auth = mapAuthResponseFromApi(response.data)
+  useAuthStore.getState().setAuth(auth)
+  requestNotificationPermission()
+  return auth
+}
 
 export function useLogin() {
-  const queryClient = useQueryClient()
-  const setAuth = useAuthStore((s) => s.setAuth)
-
-  return useMutation({
-    mutationFn: async (data: LoginRequest) => {
-      const res = await api.post<AuthResponseRaw>('/auth/login', data)
-      return mapAuthResponseFromApi(res.data)
-    },
-    onSuccess: (data) => {
-      setAuth(data)
-      queryClient.setQueryData([AUTH_KEY], data.user)
-      requestNotificationPermission()
-    },
-  })
+  return useMutation({ mutationFn: (data: LoginRequest) => signIn('/auth/login', data) })
 }
 
 export function useRegister() {
-  const queryClient = useQueryClient()
-  const setAuth = useAuthStore((s) => s.setAuth)
-
-  return useMutation({
-    mutationFn: async (data: RegisterRequest) => {
-      const res = await api.post<AuthResponseRaw>('/auth/register', data)
-      return mapAuthResponseFromApi(res.data)
-    },
-    onSuccess: (data) => {
-      setAuth(data)
-      queryClient.setQueryData([AUTH_KEY], data.user)
-      requestNotificationPermission()
-    },
-  })
+  return useMutation({ mutationFn: (data: RegisterRequest) => signIn('/auth/register', data) })
 }
 
 export function useLogout() {
   const queryClient = useQueryClient()
-  const clearAuth = useAuthStore((s) => s.clearAuth)
-
   return useMutation({
     mutationFn: async () => {
-      await api.post('/auth/logout')
-    },
-    onSuccess: () => {
-      stopConnection()
-      clearAuth()
+      const version = useAuthStore.getState().sessionVersion
+      try {
+        await api.post('/auth/logout')
+      } catch (error) {
+        if (!isAxiosError(error) || error.response?.status !== 401) throw error
+        syncAuthFromStorage()
+        const current = useAuthStore.getState()
+        // A rejected refresh already expired this login and notified its subscribers.
+        if (current.sessionVersion !== version && current.user === null && current.accessToken === null
+          && current.refreshToken === null && current.sessionId === null) return
+      }
+      if (useAuthStore.getState().sessionVersion !== version) throw new CanceledError('Session changed')
+      await stopConnection()
+      if (useAuthStore.getState().sessionVersion !== version) throw new CanceledError('Session changed')
+      if (!useAuthStore.getState().clearAuth(version)) throw new CanceledError('Session changed')
       queryClient.clear()
     },
   })

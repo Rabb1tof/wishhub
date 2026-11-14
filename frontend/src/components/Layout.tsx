@@ -4,6 +4,7 @@ import { Link, NavLink, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/auth'
 import { useLogout } from '@/api/useAuth'
 import { useUnreadCount } from '@/api/useMessages'
+import { useMyProfile } from '@/api/useProfile'
 import { useSignalR } from '@/hooks/useSignalR'
 import { requestNotificationPermission } from '@/utils/notifications'
 import { PrivateRoute } from './PrivateRoute'
@@ -30,11 +31,14 @@ const wordmark = <>
 </>
 
 export function Layout({ children, requireAuth = true }: LayoutProps) {
-  const user = useAuthStore((state) => state.user)
-  const userId = user?.id
+  const authUser = useAuthStore((state) => state.user)
+  const accessToken = useAuthStore((state) => state.accessToken)
+  const userId = authUser?.id
+  const { data: profile } = useMyProfile(!!userId && !!accessToken)
+  const user = profile && profile.id === userId ? profile : authUser
   const logout = useLogout()
   const navigate = useNavigate()
-  const { data: unreadCount } = useUnreadCount()
+  const { data: unreadCount } = useUnreadCount(!!userId)
   const [menuOpen, setMenuOpen] = useState(false)
   const menuButton = useRef<HTMLButtonElement>(null)
   const closeButton = useRef<HTMLButtonElement>(null)

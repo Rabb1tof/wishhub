@@ -1,4 +1,5 @@
 import type { MouseEvent } from 'react'
+import { useAuthStore } from '@/store/auth'
 import { useReserveItem, useCancelReservation } from '@/api/useWishlist'
 import type { WishlistItem } from '@/types/wishlist'
 import './wishlist.css'
@@ -6,7 +7,8 @@ import './wishlist.css'
 export function ItemReservation({ item, isOwner }: { item: WishlistItem; isOwner: boolean }) {
   const reserveItem = useReserveItem()
   const cancelReservation = useCancelReservation()
-  if (isOwner) return null
+  const authenticated = useAuthStore((state) => !!state.user && !!state.accessToken)
+  if (isOwner || !authenticated) return null
 
   const pending = reserveItem.isPending || cancelReservation.isPending
   const handleReservation = (event: MouseEvent<HTMLButtonElement>) => {
@@ -24,9 +26,7 @@ export function ItemReservation({ item, isOwner }: { item: WishlistItem; isOwner
         <p className="wh-reservation-status">
           {item.isReservedByMe
             ? 'Зарезервировано вами'
-            : item.reservedBy
-              ? `Зарезервировано: ${item.reservedBy.displayName}`
-              : 'Зарезервировано'}
+            : 'Зарезервировано'}
         </p>
       )}
       {(!item.isReserved || item.isReservedByMe) && (

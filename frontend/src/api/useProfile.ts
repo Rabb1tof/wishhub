@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from './client'
+import { CanceledError } from 'axios'
 import { useAuthStore } from '@/store/auth'
 
 interface UserProfileDto {
@@ -40,9 +41,10 @@ export function useProfile(username?: string) {
   })
 }
 
-export function useMyProfile() {
+export function useMyProfile(enabled = true) {
   return useQuery({
     queryKey: [PROFILE_KEY, ME_KEY],
+    enabled,
     queryFn: async () => {
       const res = await api.get<UserProfileDto>('/users/me')
       return res.data
@@ -67,39 +69,32 @@ export function useUpdateProfile() {
 export function useChangePassword() {
   return useMutation({
     mutationFn: async (data: ChangePasswordRequest) => {
+      const version = useAuthStore.getState().sessionVersion
       await api.post('/users/me/password', data)
+      if (useAuthStore.getState().sessionVersion !== version) throw new CanceledError('Session changed')
+      if (!useAuthStore.getState().clearAuth(version)) throw new CanceledError('Session changed')
     },
   })
 }
 
 export function useUploadAvatar() {
   const queryClient = useQueryClient()
-  const user = useAuthStore((s) => s.user)
-  const setAuth = useAuthStore((s) => s.setAuth)
-  const accessToken = useAuthStore((s) => s.accessToken)
-  const refreshToken = useAuthStore((s) => s.refreshToken)
-  const expiresAt = String(Date.now() + 3600 * 1000)
 
   return useMutation({
     mutationFn: async (file: File) => {
+      const version = useAuthStore.getState().sessionVersion
       const formData = new FormData()
       formData.append('file', file)
       const res = await api.post<{ avatarUrl: string }>('/users/me/avatar', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       })
+      const current = useAuthStore.getState()
+      if (current.sessionVersion !== version) throw new CanceledError('Session changed')
+      if (current.user) useAuthStore.setState({ user: { ...current.user, avatarUrl: res.data.avatarUrl } })
       return res.data.avatarUrl
     },
-    onSuccess: (avatarUrl) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [PROFILE_KEY, ME_KEY] })
-      // Обновляем аватар в Zustand store для Layout и других компонентов
-      if (user && accessToken && refreshToken) {
-        setAuth({
-          user: { ...user, avatarUrl },
-          accessToken,
-          refreshToken,
-          expiresAt,
-        })
-      }
     },
   })
 }

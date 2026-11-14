@@ -51,14 +51,14 @@ function mount(element: ReactElement, path = '/') {
 }
 
 beforeEach(() => {
-  useAuthStore.setState({ user: owner, accessToken: 'test-token', refreshToken: null })
+  useAuthStore.getState().setAuth({ user: owner, accessToken: 'test-token', refreshToken: 'test-refresh', expiresAt: '2099-01-01' })
 })
 
 afterEach(() => {
   cleanup()
   for (const client of clients.splice(0)) client.clear()
   api.defaults.adapter = originalAdapter
-  useAuthStore.setState({ user: null, accessToken: null, refreshToken: null })
+  useAuthStore.getState().clearAuth()
 })
 
 describe('ItemImage', () => {
@@ -104,18 +104,12 @@ describe('ItemReservation', () => {
     expect(adapter).not.toHaveBeenCalled()
   })
 
-  it('shows the nested reserver without offering cancellation for another user', () => {
+  it('shows a reservation by another user without offering cancellation', () => {
     const adapter = mockApi({})
-    mount(<ItemReservation item={{ ...item, isReserved: true, reservedBy: reserver }} isOwner={false} />)
-    expect(screen.getByText('Зарезервировано: Secret reserver').textContent).toBe('Зарезервировано: Secret reserver')
-    expect(screen.queryByRole('button')).toBeNull()
-    expect(adapter).not.toHaveBeenCalled()
-  })
-
-  it('shows a reserved fallback when reserver details are absent', () => {
     mount(<ItemReservation item={{ ...item, isReserved: true }} isOwner={false} />)
     expect(screen.getByText('Зарезервировано').textContent).toBe('Зарезервировано')
     expect(screen.queryByRole('button')).toBeNull()
+    expect(adapter).not.toHaveBeenCalled()
   })
 
   it('cancels only when isReservedByMe is true', async () => {
@@ -159,6 +153,7 @@ describe('Wishlist card pages', () => {
         { ...item, isReserved: true, isReservedByMe: true, reservedBy: reserver }, noPriceItem,
       ],
       'get /messages/unread/count': 0,
+      'get /users/me': { ...owner, wishlistPrivacy: 'public', wishlistItemCount: 0 },
     })
     mount(<Routes><Route path="/profile/:username" element={<ProfilePage />} /></Routes>, '/profile/owner')
     expect((await screen.findByText('Zero gift')).closest('a')?.getAttribute('href')).toBe(item.url)
@@ -169,7 +164,7 @@ describe('Wishlist card pages', () => {
     expect(screen.queryByText(/Зарезервировано/)).toBeNull()
     expect(screen.queryByText('Secret reserver')).toBeNull()
     expect(screen.queryByRole('button', { name: /резервирова/ })).toBeNull()
-    expect(adapter.mock.calls.map(([config]) => config.url).sort()).toEqual(['/messages/unread/count', '/users/owner', '/wishlist/user/owner'])
+    expect(adapter.mock.calls.map(([config]) => config.url).sort()).toEqual(['/messages/unread/count', '/users/me', '/users/owner', '/wishlist/user/owner'])
   })
 
   it('renders flat feed cards with zero and absent prices without requesting metadata', async () => {
@@ -177,6 +172,7 @@ describe('Wishlist card pages', () => {
       'get /friends': [{ id: 'friendship', user: owner, status: 'accepted', createdAt: item.createdAt }],
       'get /wishlist/user/owner': [item, noPriceItem],
       'get /messages/unread/count': 0,
+      'get /users/me': { ...owner, wishlistPrivacy: 'public', wishlistItemCount: 0 },
     })
     mount(<FeedPage />)
     expect((await screen.findByText('Zero gift')).closest('a')?.getAttribute('href')).toBe('/wishlist/owner')
@@ -184,7 +180,7 @@ describe('Wishlist card pages', () => {
     expect(screen.getByText('Gift without price').textContent).toBe(noPriceItem.name)
     expect(screen.getByText('Цена не указана').textContent).toBe('Цена не указана')
     expect(screen.getByRole('img', { name: 'Zero gift' }).getAttribute('src')).toBe(item.imageUrl)
-    expect(adapter.mock.calls.map(([config]) => config.url).sort()).toEqual(['/friends', '/messages/unread/count', '/wishlist/user/owner'])
+    expect(adapter.mock.calls.map(([config]) => config.url).sort()).toEqual(['/friends', '/messages/unread/count', '/users/me', '/wishlist/user/owner'])
   })
 })
 
@@ -200,6 +196,7 @@ it.each([
     'get /wishlist': [manualItem],
     'get /wishlist/user/owner': [manualItem],
     'get /messages/unread/count': 0,
+      'get /users/me': { ...owner, wishlistPrivacy: 'public', wishlistItemCount: 0 },
   })
   mount(<Routes><Route path={path === '/profile/owner' ? '/profile/:username' : path} element={element} /></Routes>, path)
   expect((await screen.findByText('small-shop.example')).textContent).toBe('small-shop.example')

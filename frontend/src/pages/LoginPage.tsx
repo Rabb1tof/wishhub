@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { isAxiosError } from 'axios'
 import { Link, useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { useLogin } from '@/api/useAuth'
 import { useOAuthProviders, useTelegramLogin } from '@/api/useOAuth'
@@ -11,6 +12,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   invalid_state: 'Сессия OAuth истекла, попробуйте снова',
   user_not_found: 'Пользователь не найден',
   user_create_failed: 'Не удалось создать пользователя',
+  account_link_required: 'Войдите в существующий аккаунт и привяжите VK в настройках',
 }
 
 export function LoginPage() {
@@ -85,7 +87,11 @@ export function LoginPage() {
           </div>
 
           {login.isError && (
-            <p className="text-red-500 text-sm">Неверные учетные данные</p>
+            <p role="alert" className="text-red-500 text-sm">
+              {isAxiosError(login.error) && login.error.response?.status === 429
+                ? 'Слишком много попыток входа. Попробуйте позже.'
+                : 'Неверные учетные данные'}
+            </p>
           )}
 
           <button

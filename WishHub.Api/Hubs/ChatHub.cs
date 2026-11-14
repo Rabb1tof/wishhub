@@ -40,8 +40,7 @@ public class ChatHub : Hub
                 message.CreatedAt
             });
 
-            // Confirm to sender
-            await Clients.Caller.SendAsync("MessageSent", message);
+            await Clients.User(senderId.ToString()).SendAsync("MessageSent", message);
 
             _logger.LogInformation("Message sent from {SenderId} to {ReceiverId}", senderId, receiverId);
         }
@@ -50,27 +49,6 @@ public class ChatHub : Hub
             _logger.LogError(ex, "Error sending message");
             throw;
         }
-    }
-
-    public async Task MarkAsRead(Guid messageId)
-    {
-        var userId = GetUserId();
-        await _messageService.MarkAsReadAsync(messageId, userId);
-
-        // Notify sender that message was read
-        await Clients.Others.SendAsync("MessageRead", new { MessageId = messageId, ReaderId = userId });
-    }
-
-    public async Task JoinGroup(string groupName)
-    {
-        await Groups.AddToGroupAsync(Context.ConnectionId, groupName);
-        _logger.LogInformation("User {UserId} joined group {GroupName}", GetUserId(), groupName);
-    }
-
-    public async Task LeaveGroup(string groupName)
-    {
-        await Groups.RemoveFromGroupAsync(Context.ConnectionId, groupName);
-        _logger.LogInformation("User {UserId} left group {GroupName}", GetUserId(), groupName);
     }
 
     public override async Task OnConnectedAsync()

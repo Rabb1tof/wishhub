@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using WishHub.Api;
 using WishHub.Api.Extensions;
+using WishHub.Api.Authentication;
 using WishHub.Api.Hubs;
 using WishHub.Api.Middleware;
 using WishHub.Core.Interfaces;
@@ -27,7 +28,10 @@ public class Program
         builder.Services.AddScoped<INotificationService, NotificationService>();
 
         builder.Services.AddProductMetadata(builder.Configuration);
+        builder.Services.AddPasswordRequestLimits(builder.Configuration);
+        builder.Services.AddHostedService<RefreshTokenCleanup>();
         builder.Services.AddWishlistImages(builder.Configuration, builder.Environment);
+        builder.Services.AddAvatarFiles(builder.Configuration, builder.Environment);
 
         // Add SignalR
         builder.Services.AddSingleton<Microsoft.AspNetCore.SignalR.IUserIdProvider, ChatUserIdProvider>();
@@ -55,6 +59,7 @@ public class Program
                 policy.WithOrigins("http://localhost:5173", "http://localhost:3000")
                       .AllowAnyMethod()
                       .AllowAnyHeader()
+                      .WithExposedHeaders("X-Next-Before")
                       .AllowCredentials();
             });
         });
@@ -91,6 +96,8 @@ public class Program
         // Configure the HTTP request pipeline
         // CORS должен быть ПЕРВЫМ — обрабатывает preflight до других middleware
         app.UseCors("AllowFrontend");
+        if (!string.IsNullOrWhiteSpace(app.Configuration["ReverseProxy:KnownProxies"]))
+            app.UseForwardedHeaders();
 
         app.UseMiddleware<ExceptionHandlingMiddleware>();
 
@@ -103,14 +110,14 @@ public class Program
         app.UseHttpsRedirection();
 
         // Serve static files (avatars)
-        app.UseStaticFiles();
+        app.UseAvatarFiles();
 
         app.UseAuthentication();
         app.UseAuthorization();
         app.UseRateLimiter();
 
         app.MapControllers();
-        app.MapHub<ChatHub>("/hubs/chat");
+        app.MapHub<ChatHub>("/hubs/chat", options => options.CloseOnAuthenticationExpiration = true);
         app.MapHealthChecks("/health");
 
         // Run database migrations at startup

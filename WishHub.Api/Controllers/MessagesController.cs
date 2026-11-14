@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -16,14 +17,12 @@ public class MessagesController : ControllerBase
     private readonly IMessageService _messageService;
     private readonly IUserService _userService;
     private readonly IHubContext<ChatHub> _hubContext;
-    private readonly ILogger<MessagesController> _logger;
 
-    public MessagesController(IMessageService messageService, IUserService userService, IHubContext<ChatHub> hubContext, ILogger<MessagesController> logger)
+    public MessagesController(IMessageService messageService, IUserService userService, IHubContext<ChatHub> hubContext)
     {
         _messageService = messageService;
         _userService = userService;
         _hubContext = hubContext;
-        _logger = logger;
     }
 
     private Guid GetCurrentUserId()
@@ -33,19 +32,30 @@ public class MessagesController : ControllerBase
     }
 
     [HttpGet("dialogs")]
-    public async Task<ActionResult<IReadOnlyList<DialogDto>>> GetDialogs()
+    public async Task<ActionResult<IReadOnlyList<DialogDto>>> GetDialogs(CancellationToken ct)
     {
         var userId = GetCurrentUserId();
-        var dialogs = await _messageService.GetDialogsAsync(userId);
+        var dialogs = await _messageService.GetDialogsAsync(userId, ct);
         return Ok(dialogs);
     }
 
     [HttpGet("{userId:guid}")]
-    public async Task<ActionResult<IReadOnlyList<MessageDto>>> GetMessages(Guid userId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    public async Task<ActionResult<IReadOnlyList<MessageDto>>> GetMessages(
+        Guid userId, [FromQuery, Range(1, 10_000)] int page = 1,
+        [FromQuery, Range(1, 100)] int pageSize = 20, [FromQuery] Guid? before = null,
+        CancellationToken ct = default)
     {
-        var currentUserId = GetCurrentUserId();
-        var messages = await _messageService.GetMessagesAsync(currentUserId, userId, page, pageSize);
-        return Ok(messages);
+        if (before.HasValue && page != 1)
+            return BadRequest();
+
+        var result = await _messageService.GetMessagesAsync(GetCurrentUserId(), userId, page, pageSize, before, ct);
+        if (result is null)
+            return NotFound();
+
+        if (result.NextBefore is { } next)
+            Response.Headers["X-Next-Before"] = next.ToString();
+
+        return Ok(result.Messages);
     }
 
     [HttpPost("{userId:guid}")]
@@ -59,6 +69,7 @@ public class MessagesController : ControllerBase
             return NotFound(new { error = "User not found" });
 
         var message = await _messageService.SendMessageAsync(senderId, userId, request.Content);
+        await _hubContext.Clients.User(senderId.ToString()).SendAsync("MessageSent", message);
 
         // Пушим SignalR событие получателю
         await _hubContext.Clients.User(userId.ToString()).SendAsync("ReceiveMessage", new
@@ -93,22 +104,22 @@ public class MessagesController : ControllerBase
         return NoContent();
     }
 
-    [HttpPost("{userId:guid}/read-all")]
-    public async Task<IActionResult> MarkDialogAsRead(Guid userId)
+    [HttpPost("{userId:guid}/read-batch")]
+    public async Task<ActionResult<IReadOnlyList<Guid>>> MarkMessagesAsRead(
+        Guid userId, MarkMessagesReadRequest request, CancellationToken ct)
     {
         var currentUserId = GetCurrentUserId();
-        var count = await _messageService.MarkDialogAsReadAsync(currentUserId, userId);
-
-        // Уведомляем отправителя, что сообщения прочитаны
-        if (count > 0)
+        var (accepted, changed) = await _messageService.MarkMessagesAsReadAsync(currentUserId, userId, request.MessageIds, ct);
+        if (changed)
         {
             await _hubContext.Clients.User(userId.ToString()).SendAsync("MessageRead", new
             {
-                ReaderId = currentUserId
+                ReaderId = currentUserId,
+                MessageIds = accepted
             });
         }
 
-        return NoContent();
+        return Ok(accepted);
     }
 
     [HttpGet("unread/count")]

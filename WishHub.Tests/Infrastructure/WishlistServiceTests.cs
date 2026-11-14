@@ -144,19 +144,17 @@ public class WishlistServiceTests
         Assert.False(edited!.IsReserved);
         Assert.Null(edited.ReservedBy);
         Assert.True((await store.Db.WishlistItems.AsNoTracking().SingleAsync()).IsReserved);
-        Assert.Null(await store.Service.CancelReservationAsync(card.Id, owner.Id));
-        Assert.Null(await store.Service.CancelReservationAsync(card.Id, stranger.Id));
-        var cancelled = await store.Service.CancelReservationAsync(card.Id, reserver.Id);
-        Assert.False(cancelled!.IsReserved);
-        Assert.False(cancelled.IsReservedByMe);
-        Assert.Null(cancelled.ReservedBy);
+        Assert.False(await store.Service.CancelReservationAsync(card.Id, owner.Id));
+        Assert.False(await store.Service.CancelReservationAsync(card.Id, stranger.Id));
+        Assert.True(await store.Service.CancelReservationAsync(card.Id, reserver.Id));
         var saved = await store.Db.WishlistItems.AsNoTracking().SingleAsync();
         Assert.False(saved.IsReserved);
         Assert.Null(saved.ReservedById);
-        Assert.Null(await store.Service.CancelReservationAsync(card.Id, reserver.Id));
+        Assert.False(await store.Service.CancelReservationAsync(card.Id, reserver.Id));
     }
 
     [Theory]
+    [InlineData((WishlistPrivacy)3, FriendshipStatus.Accepted, false)]
     [InlineData(WishlistPrivacy.Private, FriendshipStatus.Accepted, false)]
     [InlineData(WishlistPrivacy.FriendsOnly, FriendshipStatus.Pending, false)]
     [InlineData(WishlistPrivacy.FriendsOnly, FriendshipStatus.Blocked, false)]

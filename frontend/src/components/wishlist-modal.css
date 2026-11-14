@@ -16,6 +16,18 @@
 .wh-found { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 12px 16px; border-radius: 12px; background: #f2f5f4; font-size: 13px; }
 .wh-found > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .wh-found p { margin: 0; }
+.wh-found--market { display: grid; }
+.wh-found-details { display: flex; align-items: start; gap: 12px; }
+.wh-found-details > div:last-child { min-width: 0; }
+.wh-found-details h3 { margin: 0 0 4px; font-size: 14px; font-weight: 650; }
+.wh-found-photo { flex: 0 0 76px; border-radius: 8px; background: #fff; overflow: hidden; }
+.wh-found-image { width: 76px; height: 76px; object-fit: contain; }
+.wh-found-photo .wh-image-placeholder { display: grid; place-content: center; gap: 2px; text-align: center; font-size: 10px; }
+.wh-found-photo svg { width: 18px; height: 21px; margin-inline: auto; }
+.wh-found-fields { display: flex; flex-wrap: wrap; gap: 0 16px; margin-top: 4px; }
+.wh-found-fields label { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; }
+.wh-found-fields input { accent-color: var(--wh-accent); }
+.wh-found-actions { display: flex; flex-wrap: wrap; justify-content: end; gap: 6px; }
 .wh-photo-heading { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
 .wh-photo-heading h3 { margin: 0; font-size: 14px; font-weight: 600; }
 .wh-photo-heading span { font-size: 12px; }

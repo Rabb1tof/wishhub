@@ -6,7 +6,7 @@ import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import api from './client'
 import { resolveMetadata } from './metadata'
-import { useAddItem, useUpdateItem, useWishlist } from './useWishlist'
+import { useAddItem, useCancelReservation, useUpdateItem, useWishlist } from './useWishlist'
 import type { WishlistItem } from '@/types/wishlist'
 
 const item: WishlistItem = {
@@ -125,7 +125,32 @@ describe('wishlist API', () => {
     await expect(resolveMetadata(item.url, controller.signal)).resolves.toEqual(metadata)
     expect(adapter).toHaveBeenCalledTimes(1)
     expect(adapter.mock.calls[0][0]).toMatchObject({ method: 'post', url: '/metadata/resolve' })
-    expect(adapter.mock.calls[0][0].signal).toBe(controller.signal)
+    expect(adapter.mock.calls[0][0].signal?.aborted).toBe(false)
     expect(JSON.parse(adapter.mock.calls[0][0].data)).toEqual({ url: item.url })
   })
+})
+
+it('cancels a reservation with a void response and refreshes wishlist views', async () => {
+  adapter.mockImplementation(async (config) => response(config, '', 204))
+  client.setQueryData(['wishlist', 'owner-1'], [item])
+  const { result } = renderHook(() => useCancelReservation(), { wrapper: Wrapper })
+  await act(async () => { expect(await result.current.mutateAsync(item.id)).toBeUndefined() })
+  expect(adapter.mock.calls[0][0]).toMatchObject({ method: 'post', url: '/wishlist/item-1/cancel-reservation' })
+  expect(client.getQueryState(['wishlist', 'owner-1'])?.isInvalidated).toBe(true)
+})
+
+it('cancels the actual metadata request when its caller aborts', async () => {
+  adapter.mockImplementation(async (config) => {
+    await new Promise<void>((resolve) => config.signal?.addEventListener?.('abort', () => resolve()))
+    return response(config, { status: 'unavailable' })
+  })
+  const controller = new AbortController()
+  const request = resolveMetadata(item.url, controller.signal)
+  const rejected = expect(request).rejects.toMatchObject({ code: 'ERR_CANCELED' })
+  await waitFor(() => expect(adapter).toHaveBeenCalledTimes(1))
+  const actualSignal = adapter.mock.calls[0][0].signal
+  expect(actualSignal?.aborted).toBe(false)
+  controller.abort()
+  expect(actualSignal?.aborted).toBe(true)
+  await rejected
 })

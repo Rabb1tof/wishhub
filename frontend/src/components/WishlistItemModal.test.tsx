@@ -263,6 +263,105 @@ describe('WishlistItemModal explicit metadata', () => {
   })
 })
 
+
+describe('WishlistItemModal Market suggestion', () => {
+  const shortUrl = 'https://market.yandex.ru/cc/9rsgau'
+  const resultFromMarket = { ...result, source: 'yandexMarket' }
+
+  it.each([
+    { label: 'no matching variant', status: 'unavailable', reason: 'missing_fields', url: shortUrl, expected: 'Для этой модели и варианта пока нет подсказки' },
+    { label: 'unresolved short link', status: 'unavailable', reason: 'redirect_rejected', url: shortUrl, expected: 'Попробуйте вставить полную ссылку на товар' },
+    { label: 'unsupported address', status: 'unsupported', reason: 'unsupported_url', url: 'https://market.yandex.ru/search', expected: 'Вставьте ссылку на карточку товара' },
+    { label: 'catalog unavailable', status: 'unavailable', reason: 'source_unavailable', url: shortUrl, expected: 'Подбор данных для Маркета временно недоступен' },
+    { label: 'catalog redirect for full link', status: 'unavailable', reason: 'redirect_rejected', url: 'https://market.yandex.ru/card/item/123', expected: 'Подбор данных для Маркета временно недоступен' },
+  ] as const)('explains a Market lookup failure for $label and allows manual save', async ({ status, reason, url, expected }) => {
+    vi.spyOn(metadata, 'resolveMetadata').mockResolvedValue({ ...resultFromMarket, status, reason, name: null, imageUrl: null })
+    const { onClose } = open()
+    change('Ссылка на товар', url)
+    change('Название', 'Manual gift')
+    fetchData()
+
+    expect((await screen.findByRole('status')).textContent).toContain(expected)
+    expect(screen.queryByRole('button', { name: 'Подтвердить' })).toBeNull()
+    save()
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+    expect(body()).toMatchObject({ url, name: 'Manual gift', imageUrl: null })
+  })
+
+  it('previews a Market match and keeps the shared link when the user confirms', async () => {
+    const resolve = vi.spyOn(metadata, 'resolveMetadata').mockResolvedValue(resultFromMarket)
+    const { onClose } = open()
+    change('Ссылка на товар', shortUrl)
+    change('Цена (необязательно)', '42.50')
+    change('Валюта', 'USD')
+    fetchData()
+
+    const confirm = await screen.findByRole('button', { name: 'Подтвердить' })
+    expect(resolve.mock.calls[0][0]).toBe(shortUrl)
+    expect(screen.getByRole('region', { name: 'Предложение для ссылки Маркета' }).textContent).toContain('Found gift')
+    const preview = screen.getByRole('img', { name: 'Предложенное фото товара' })
+    expect(preview.getAttribute('src')).toBe(result.imageUrl)
+    expect(preview.getAttribute('referrerpolicy')).toBe('no-referrer')
+    expect(input('Название').value).toBe('')
+    expect(input('Фото: URL (необязательно)').value).toBe('')
+
+    fireEvent.click(confirm)
+    expect(input('Название').value).toBe('Found gift')
+    expect(input('Фото: URL (необязательно)').value).toBe(result.imageUrl)
+    expect(screen.queryByRole('region', { name: 'Предложение для ссылки Маркета' })).toBeNull()
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Получить данные' }))
+    expect(adapter).not.toHaveBeenCalled()
+    save()
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+    expect(body()).toEqual({ url: shortUrl, name: 'Found gift', imageUrl: result.imageUrl, price: 42.5, currency: 'USD' })
+  })
+
+  it('requires an explicit choice to replace filled fields and clears that choice after editing', async () => {
+    vi.spyOn(metadata, 'resolveMetadata').mockResolvedValue(resultFromMarket)
+    const managed = '/api/wishlist-images/12345678-1234-1234-1234-123456789abc/abcdef12-1234-5678-9012-abcdef123456.jpg'
+    const { onClose } = open({ ...item, url: shortUrl, imageUrl: managed })
+    fetchData()
+    const confirm = await screen.findByRole('button', { name: 'Подтвердить' }) as HTMLButtonElement
+    const name = screen.getByRole('checkbox', { name: 'Использовать название' }) as HTMLInputElement
+    const photo = screen.getByRole('checkbox', { name: 'Использовать фото' }) as HTMLInputElement
+    expect(name.checked).toBe(false)
+    expect(photo.checked).toBe(false)
+    expect(confirm.disabled).toBe(true)
+
+    fireEvent.click(name)
+    change('Название', 'My manual edit')
+    expect(name.checked).toBe(false)
+    expect(confirm.disabled).toBe(true)
+    fireEvent.click(name)
+    fireEvent.click(confirm)
+    expect(input('Название').value).toBe('Found gift')
+    expect(screen.getByText('Используется загруженное фото; ссылка заменит его.')).toBeDefined()
+    save()
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+    const savedConfig = adapter.mock.calls.find(([config]) => config.method === 'put')?.[0]
+    expect(JSON.parse(savedConfig?.data)).toMatchObject({ name: 'Found gift', url: shortUrl, imageUrl: managed, price: 25 })
+  })
+
+  it('discards a partial Market suggestion on dismissal or changing the link', async () => {
+    vi.spyOn(metadata, 'resolveMetadata').mockResolvedValue({ ...resultFromMarket, status: 'partial', imageUrl: null })
+    const { onClose } = open()
+    change('Ссылка на товар', shortUrl)
+    change('Название', 'Manual gift')
+    fetchData()
+    fireEvent.click(await screen.findByRole('button', { name: 'Отклонить' }))
+    expect(input('Название').value).toBe('Manual gift')
+    expect(screen.queryByRole('button', { name: 'Подтвердить' })).toBeNull()
+    fetchData()
+    await screen.findByRole('button', { name: 'Подтвердить' })
+    expect(screen.queryByRole('checkbox', { name: 'Использовать фото' })).toBeNull()
+    change('Ссылка на товар', 'https://market.yandex.ru/cc/new')
+    expect(screen.queryByRole('button', { name: 'Подтвердить' })).toBeNull()
+    save()
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+    expect(body()).toMatchObject({ url: 'https://market.yandex.ru/cc/new', name: 'Manual gift', imageUrl: null })
+  })
+})
+
 it('ignores metadata queued before a URL edit in the same render batch', async () => {
   const pending = deferred()
   vi.spyOn(metadata, 'resolveMetadata').mockReturnValue(pending.promise)

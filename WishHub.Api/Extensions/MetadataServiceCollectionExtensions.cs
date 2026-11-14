@@ -17,7 +17,8 @@ public static class MetadataServiceCollectionExtensions
         }).ConfigurePrimaryHttpMessageHandler(MetadataHttpTransport.CreateHandler);
         services.AddSingleton<IProductMetadataService>(sp => new ProductMetadataService(
             sp.GetRequiredService<IHttpClientFactory>().CreateClient("ProductMetadata"),
-            configuration.GetValue<bool>("Metadata:EnableOzonWbray")));
+            configuration.GetValue<bool>("Metadata:EnableOzonWbray"),
+            configuration.GetValue<bool>("Metadata:EnableMarketPreview")));
         services.AddRateLimiter(options =>
         {
             options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;

@@ -1,49 +1,98 @@
-import { useState, useRef, useEffect } from 'react'
-import { useMessages, useSendMessage, useMarkDialogAsRead } from '@/api/useMessages'
+import { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react'
+import { useMessages, useSendMessage, useMarkMessagesAsRead } from '@/api/useMessages'
+import type { Message } from '@/types/messages'
+import { useAuthStore } from '@/store/auth'
 
 interface ChatWindowProps {
   userId: string
   userName: string
 }
 
+function compareMessages(a: Message, b: Message) {
+  const time = Date.parse(a.createdAt) - Date.parse(b.createdAt)
+  // JS dates round to milliseconds, while PostgreSQL timestamps retain microseconds.
+  return time || a.createdAt.replace(/Z$/, '').localeCompare(b.createdAt.replace(/Z$/, ''))
+    || a.id.localeCompare(b.id)
+}
+
 export function ChatWindow({ userId, userName }: ChatWindowProps) {
-  const { data: messages, isLoading } = useMessages(userId)
+  const sessionVersion = useAuthStore((state) => state.sessionVersion)
+  const history = useMessages(userId)
+  const messages = useMemo(() => {
+    const byId = new Map(history.data?.pages.flatMap((page) => page.messages.map((m) => [m.id, m] as const)))
+    return Array.from(byId.values()).sort(compareMessages)
+  }, [history.data])
   const sendMessage = useSendMessage()
-  const markDialogAsRead = useMarkDialogAsRead()
+  const { mutate: markAsRead, isPending: marking, isError: readFailed, variables: readBatch } = useMarkMessagesAsRead()
+  const attempted = useRef(new Set<string>())
+  const [visible, setVisible] = useState(() => document.visibilityState !== 'hidden')
   const [newMessage, setNewMessage] = useState('')
-  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const viewportRef = useRef<HTMLDivElement>(null)
+  const followLatest = useRef(true)
+  const scrollAnchor = useRef<{ element: Element; top: number; pageCount: number } | null>(null)
+  const pageCount = history.data?.pages.length ?? 0
+  const lastMessageId = messages.at(-1)?.id
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+    const onVisibility = () => setVisible(document.visibilityState !== 'hidden')
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [])
 
-  // Помечаем все сообщения в диалоге как прочитанные при открытии
-  useEffect(() => {
-    markDialogAsRead.mutateAsync(userId)
-  }, [userId])
-
-  // Помечаем новые входящие сообщения как прочитанные, пока диалог открыт
-  useEffect(() => {
-    if (messages && messages.length > 0) {
-      const hasUnread = messages.some((m) => m.senderId === userId && !m.isRead)
-      if (hasUnread) {
-        markDialogAsRead.mutateAsync(userId)
-      }
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return
+    const anchor = scrollAnchor.current
+    if (anchor && pageCount > anchor.pageCount) {
+      viewport.scrollTop += anchor.element.getBoundingClientRect().top - anchor.top
+      scrollAnchor.current = null
+    } else if (!anchor && followLatest.current) {
+      viewport.scrollTop = viewport.scrollHeight
     }
-  }, [messages, userId])
+  }, [lastMessageId, pageCount])
 
-  const handleSend = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!newMessage.trim()) return
+  useEffect(() => {
+    const root = viewportRef.current
+    if (!root || !visible || marking || readFailed || !window.IntersectionObserver) return
+    const unread = [...root.querySelectorAll<HTMLElement>('[data-unread-id]')]
+      .filter((row) => !attempted.current.has(row.dataset.unreadId!))
+    if (unread.length === 0) return
 
-    await sendMessage.mutateAsync({ userId, content: newMessage })
-    setNewMessage('')
-    // Помечаем все входящие как прочитанные при отправке ответа
-    markDialogAsRead.mutateAsync(userId)
+    let active = true
+    const observer = new IntersectionObserver((entries) => {
+      if (!active || document.visibilityState === 'hidden') return
+      const messageIds = entries.filter((entry) => entry.isIntersecting && entry.intersectionRatio > 0)
+        .map((entry) => (entry.target as HTMLElement).dataset.unreadId!)
+        .slice(0, 100)
+      if (!messageIds.length) return
+
+      active = false
+      for (const id of messageIds) attempted.current.add(id)
+      markAsRead({ userId, messageIds, sessionVersion })
+    }, { root })
+    for (const row of unread) observer.observe(row)
+    return () => {
+      active = false
+      observer.disconnect()
+    }
+  }, [markAsRead, marking, messages, readFailed, sessionVersion, userId, visible])
+
+  const loadOlder = async () => {
+    const first = viewportRef.current?.querySelector('[data-chat-message]')
+    if (first) scrollAnchor.current = { element: first, top: first.getBoundingClientRect().top, pageCount }
+    const result = await history.fetchNextPage({ cancelRefetch: false })
+    if (result.isFetchNextPageError || result.data?.pages.length === pageCount) scrollAnchor.current = null
   }
 
-  if (isLoading) {
-    return <div className="flex-1 flex items-center justify-center">Загрузка...</div>
+  const handleSend = (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!newMessage.trim() || sendMessage.isPending) return
+    sendMessage.mutate({ userId, content: newMessage, sessionVersion }, { onSuccess: () => {
+      followLatest.current = true
+      const viewport = viewportRef.current
+      if (viewport) viewport.scrollTop = viewport.scrollHeight
+      setNewMessage('')
+    } })
   }
 
   return (
@@ -52,10 +101,41 @@ export function ChatWindow({ userId, userName }: ChatWindowProps) {
         <h3 className="font-semibold">{userName}</h3>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages?.map((message) => (
+      <div
+        ref={viewportRef}
+        className="flex-1 overflow-y-auto p-4 space-y-4 [overflow-anchor:none]"
+        onScroll={(event) => {
+          const viewport = event.currentTarget
+          followLatest.current = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop < 24
+        }}
+      >
+        {history.isLoading && <p role="status">Загрузка сообщений...</p>}
+        {history.isLoadingError && (
+          <div>
+            <p role="alert">Не удалось загрузить сообщения.</p>
+            <button type="button" className="text-blue-700 underline" onClick={() => void history.refetch()}>
+              Повторить загрузку
+            </button>
+          </div>
+        )}
+        {history.hasNextPage && (
+          <div className="text-center">
+            <button
+              type="button"
+              disabled={history.isFetching}
+              className="text-blue-700 underline disabled:opacity-50"
+              onClick={() => void loadOlder()}
+            >
+              {history.isFetchingNextPage ? 'Загрузка...' : 'Загрузить более ранние сообщения'}
+            </button>
+            {history.isFetchNextPageError && <p role="alert">Не удалось загрузить предыдущие сообщения.</p>}
+          </div>
+        )}
+        {messages.map((message) => (
           <div
             key={message.id}
+            data-chat-message
+            data-unread-id={message.senderId === userId && !message.isRead ? message.id : undefined}
             className={`flex ${message.senderId === userId ? 'justify-start' : 'justify-end'}`}
           >
             <div
@@ -73,14 +153,25 @@ export function ChatWindow({ userId, userName }: ChatWindowProps) {
             </div>
           </div>
         ))}
-        <div ref={messagesEndRef} />
       </div>
 
+      {readFailed && readBatch && (
+        <div className="px-4">
+          <p role="alert" className="text-red-600">Не удалось отметить сообщения прочитанными.</p>
+          <button type="button" className="text-blue-700 underline" onClick={() => { if (visible) markAsRead(readBatch) }} disabled={!visible}>
+            Повторить отметку
+          </button>
+        </div>
+      )}
+      {sendMessage.isError && <p role="alert" className="text-red-600 px-4">Не удалось отправить сообщение. Попробуйте ещё раз.</p>}
       <form onSubmit={handleSend} className="p-4 border-t flex gap-2">
         <input
           type="text"
+          aria-label="Текст сообщения"
+          maxLength={2000}
+          disabled={sendMessage.isPending}
           value={newMessage}
-          onChange={(e) => setNewMessage(e.target.value)}
+          onChange={(event) => setNewMessage(event.target.value)}
           placeholder="Написать сообщение..."
           className="flex-1 px-4 py-2 border rounded-md"
         />

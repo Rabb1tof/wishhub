@@ -40,10 +40,10 @@ function renderPage(path = '/wishlist') {
 
 beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } } })
-  useAuthStore.setState({ user: owner, accessToken: 'test-token', refreshToken: null })
+  useAuthStore.getState().setAuth({ user: owner, accessToken: 'test-token', refreshToken: 'test-refresh', expiresAt: '2099-01-01' })
   adapter = vi.fn<AxiosAdapter>(async (config) => {
     if (config.url === '/messages/unread/count') return response(config, 0)
-    if (config.url === '/users/owner') return response(config, profile)
+    if (config.url === '/users/owner' || config.url === '/users/me') return response(config, profile)
     if (config.url === '/wishlist' || config.url === '/wishlist/user/owner-1') return response(config, [item])
     throw new Error(`Unexpected request: ${config.method} ${config.url}`)
   })
@@ -115,7 +115,7 @@ describe('WishlistPage', () => {
     const waitingProfile = new Promise<void>((resolve) => { completeProfile = resolve })
     const normalAdapter = adapter.getMockImplementation()!
     adapter.mockImplementation(async (config) => {
-      if (config.url === '/users/owner') await waitingProfile
+      if (config.url === '/users/owner' || config.url === '/users/me') await waitingProfile
       return normalAdapter(config)
     })
     renderPage('/wishlist/owner')

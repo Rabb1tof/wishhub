@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using WishHub.Core.DTOs.Users;
 using WishHub.Core.Interfaces;
+using WishHub.Core.Validation;
+using WishHub.Api.Authentication;
 
 namespace WishHub.Api.Controllers;
 
@@ -65,7 +67,7 @@ public class UsersController : ControllerBase
 
     [Authorize]
     [HttpPost("me/password")]
-    public async Task<IActionResult> ChangePassword(ChangePasswordRequest request)
+    public async Task<IActionResult> ChangePassword(ChangePasswordRequest request, [FromServices] IConfiguration configuration)
     {
         var userId = GetCurrentUserId()!;
         var success = await _userService.ChangePasswordAsync(userId.Value, request);
@@ -73,18 +75,25 @@ public class UsersController : ControllerBase
         if (!success)
             return BadRequest(new { error = "Failed to change password" });
 
+        OAuthCompletion.ClearPending(Request, Response, configuration);
         return NoContent();
     }
 
     [Authorize]
     [HttpPost("me/avatar")]
-    public async Task<ActionResult<object>> UploadAvatar(IFormFile file)
+    [RequestSizeLimit(WishlistImageLimits.MaxFileBytes + 64 * 1024)]
+    [RequestFormLimits(MultipartBodyLengthLimit = WishlistImageLimits.MaxFileBytes + 64 * 1024,
+        MemoryBufferThreshold = 64 * 1024, MultipartHeadersCountLimit = 8, MultipartHeadersLengthLimit = 8192)]
+    public async Task<ActionResult<object>> UploadAvatar(IFormFile file, CancellationToken ct = default)
     {
         if (file == null || file.Length == 0)
             return BadRequest(new { error = "No file uploaded" });
+        if (file.Length > WishlistImageLimits.MaxFileBytes)
+            return StatusCode(StatusCodes.Status413PayloadTooLarge, new { error = "Avatar exceeds the 5 MiB limit." });
 
         var userId = GetCurrentUserId()!;
-        var avatarUrl = await _userService.UploadAvatarAsync(userId.Value, file.OpenReadStream(), file.ContentType, file.FileName);
+        await using var content = file.OpenReadStream();
+        var avatarUrl = await _userService.UploadAvatarAsync(userId.Value, content, file.ContentType, file.FileName, ct);
 
         if (avatarUrl == null)
             return BadRequest(new { error = "Failed to upload avatar" });
